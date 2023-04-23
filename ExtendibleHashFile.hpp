@@ -2,9 +2,13 @@
 #define EXTENDIBLE_HASH_EXTENDIBLEHASHFILE_HPP
 
 #include <bitset>
+#include <cstring>
 #include <fstream>
 #include <vector>
-#include <cstring>
+
+/*
+ * File I/O Macro definitions
+ */
 
 #define SAFE_FILE_OPEN(file, file_name, flags)            \
     file.open(file_name, flags);                          \
@@ -34,11 +38,41 @@
 
 #define TELL(file) file.tellp()
 
+
+/*
+ * Definitions of constants related to Disk Space Management
+ */
+
+#define BLOCK_SIZE 1024
+
+/*
+ * Each bucket should fit in RAM.
+ * Thus, the equation for determining the maximum amount of records per bucket is given by the sum of the size of its attributes:
+ * BLOCK_SIZE = sizeof(long) + (MAX_RECORDS_PER_BUCKET * sizeof(RecordType)) + sizeof(long)
+ */
+
+template<typename RecordType>
+const long MAX_RECORDS_PER_BUCKET = (BLOCK_SIZE - 2 * sizeof(long)) / sizeof(RecordType);
+
+#define MAX_RECORDS_PER_BUCKET MAX_RECORDS_PER_BUCKET<RecordType>
+
+
+/*
+ * Class/Struct definitions
+ */
+
+template<typename RecordType>
+struct Bucket {
+    long size = 0;                             // < Stores the real amount of records the bucket holds
+    RecordType records[MAX_RECORDS_PER_BUCKET];// < Stores the data of the records themselves
+    long next = -1;                            // < Stores a reference to the next bucket in the chain (if it exists)
+};
+
 template<typename std::size_t D>
 struct ExtendibleHashEntry {
-    std::size_t local_depth = 1;// < Stores the local depth of the bucket
+    std::size_t local_depth = 0;// < Stores the local depth of the bucket
     char sequence[D + 1] = {};  // < Stores the binary hash sequence
-    long bucket_ref = -1;       // < Stores a reference to a page in disk
+    long bucket_ref = 0;        // < Stores a reference to a page in disk
 };
 
 template<typename std::size_t D>
@@ -46,6 +80,13 @@ class ExtendibleHash {
     std::vector<ExtendibleHashEntry<D>> hash_entries;
 
 public:
+    ExtendibleHash() {
+        // Initialize an empty index with one entry (the sequence 0...0) at local depth 0 with a reference to the first bucket of the file (0)
+        ExtendibleHashEntry<D> newEntry{};
+        std::string empty_sequence = std::bitset<D>(0);
+        std::strcpy(newEntry.sequence, empty_sequence);
+        hash_entries.push_back(newEntry);
+    }
     explicit ExtendibleHash(std::fstream &index_file) {
         // Get the size of the index file
         SEEK_ALL(index_file, 0, std::ios::end)
@@ -64,13 +105,16 @@ public:
             }
         }
     }
+    void insert(const std::string &hash_sequence) {
+
+    }
     long lookup(const std::string &hash_sequence) {
-        for (const auto &entry : hash_entries) {
+        for (const auto &entry: hash_entries) {
             auto local_depth = entry.local_depth;
             bool eq = true;
             for (int j = 0; j < local_depth; ++j) {
                 // If the sequences are different given the local depth, this is not the bucket we're looking for
-                if (hash_sequence[D-1-j] != entry.sequence[D-1-j]) {
+                if (hash_sequence[D - 1 - j] != entry.sequence[D - 1 - j]) {
                     eq = false;
                     break;
                 }
@@ -108,8 +152,22 @@ public:
         index_name = file_name + "_index.dat";
         // Load or create index file
         SAFE_FILE_OPEN(index_file, index_name, flags)
-        hash_index = new ExtendibleHash<global_depth>{index_file};
-        hash_index->lookup("101");
+        // If the index file is empty, initialize the index depending on whether the data file is empty or not
+        if (index_file.peek() == std::ifstream::traits_type::eof()) {
+            SAFE_FILE_OPEN(file, file_name, flags)
+            // Data file is empty, just initialize an empty index
+            hash_index = new ExtendibleHash<global_depth>{};
+            // Data file is not empty, construct the index accordingly (insert the entries)
+            if (file.peek() != std::ifstream::traits_type::eof()) {
+
+            }
+            file.close();
+        }
+        // The file is not empty, read its contents
+        else {
+            hash_index = new ExtendibleHash<global_depth>{index_file};
+            //            hash_index->lookup("101");
+        }
         index_file.close();
     }
 
@@ -131,6 +189,10 @@ public:
         SAFE_FILE_OPEN(file, file_name, flags)
         std::string hash_sequence = std::bitset<global_depth>(hash_function(key) % global_depth).to_string();
         long bucket_ref = hash_index->lookup(hash_sequence);
+        SEEK_ALL(file, bucket_ref)
+        Bucket<RecordType> bucket{};
+        file.read((char *) &bucket, BLOCK_SIZE);
+        file.close();
         return result;
     }
 
