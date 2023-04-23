@@ -3,7 +3,7 @@ project(extendible_hash)
 
 set(CMAKE_CXX_STANDARD 17)
 
-add_executable(extendible_hash main.cpp ExtendibleHash.hpp)
+add_executable(extendible_hash main.cpp ExtendibleHashFile.hpp)
 
 add_executable(read_data read_data.cpp)
 

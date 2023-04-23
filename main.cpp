@@ -2,7 +2,7 @@
 #include <functional>
 #include <sstream>
 
-#include "ExtendibleHash.hpp"
+#include "ExtendibleHashFile.hpp"
 
 struct Record {
     char code[5];
@@ -26,7 +26,7 @@ int main() {
         return record.name;
     };
 
-    ExtendibleHash<char *, Record, decltype(greater), decltype(index), 3> extendibleHash{"data.dat", true, index, greater};
-    extendibleHash.search("Hello");
+    ExtendibleHashFile<char *, Record, decltype(greater), decltype(index), 3> extendibleHash{"data.dat", true, index, greater};
+    extendibleHash.search("Juan               ");
     return 0;
 }
