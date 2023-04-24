@@ -4,6 +4,15 @@
 
 #include "ExtendibleHashFile.hpp"
 
+void readFromConsole(char buffer[], int size) {
+    std::string temp;
+    std::cin >> temp;
+    for (int i = 0; i < size; i++)
+        buffer[i] = (i < temp.size()) ? temp[i] : ' ';
+    buffer[size - 1] = '\0';
+    std::cin.clear();
+}
+
 struct Record {
     char code[5];
     char name[20];
@@ -22,11 +31,15 @@ int main() {
         return std::string(a) > std::string(b);
     };
 
-    std::function<char *(Record &)> index = [=](Record &record) {
-        return record.name;
+    std::function<int (Record &)> index = [=](Record &record) {
+        return record.cycle;
     };
 
-    ExtendibleHashFile<char *, Record, decltype(greater), decltype(index), 3> extendibleHash{"data.dat", true, index, greater};
-//    extendibleHash.search("Juan               ");
+    ExtendibleHashFile<int, Record, decltype(greater), decltype(index), 3> extendibleHash{"data.dat", true, index, greater};
+    Record new_record{};
+    readFromConsole(new_record.code, 5);
+    readFromConsole(new_record.name, 20);
+    std::cin >> new_record.cycle;
+    extendibleHash.insert(new_record);
     return 0;
 }

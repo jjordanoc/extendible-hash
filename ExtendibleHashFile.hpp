@@ -96,7 +96,7 @@ struct Bucket {
 
 template<typename std::size_t D>
 struct ExtendibleHashEntry {
-    std::size_t local_depth = 0;// < Stores the local depth of the bucket
+    std::size_t local_depth = 1;// < Stores the local depth of the bucket
     char sequence[D + 1] = {};  // < Stores the binary hash sequence
     long bucket_ref = 0;        // < Stores a reference to a page in disk
 };
@@ -106,12 +106,17 @@ class ExtendibleHash {
     std::vector<ExtendibleHashEntry<D>> hash_entries;
 
 public:
-    ExtendibleHash() {
-        // Initialize an empty index with one entry (the sequence 0...0) at local depth 0 with a reference to the first bucket of the file (0)
-        ExtendibleHashEntry<D> newEntry{};
-        std::string empty_sequence = std::bitset<D>(0).to_string();
-        std::strcpy(newEntry.sequence, empty_sequence.c_str());
-        hash_entries.push_back(newEntry);
+    explicit ExtendibleHash(long bucket_1_ref) {
+        // Initialize an empty index with two entries (the sequences 0...0 and 1...1) at local depth 1 with a reference to the first two buckets of the file
+        ExtendibleHashEntry<D> entry_0{};
+        std::string empty_sequence_0 = std::bitset<D>(0).to_string();
+        std::strcpy(entry_0.sequence, empty_sequence_0.c_str());
+        ExtendibleHashEntry<D> entry_1{};
+        std::string empty_sequence_1 = std::bitset<D>(1).to_string();
+        std::strcpy(entry_1.sequence, empty_sequence_1.c_str());
+        entry_1.bucket_ref = bucket_1_ref;
+        hash_entries.push_back(entry_0);
+        hash_entries.push_back(entry_1);
     }
     explicit ExtendibleHash(std::fstream &index_file) {
         // Get the size of the index file
@@ -213,12 +218,14 @@ public:
         // If the index file is empty, initialize the index
         if (index_file.peek() == std::ifstream::traits_type::eof() && hash_file.peek() == std::ifstream::traits_type::eof()) {//
             SAFE_FILE_OPEN(raw_file, raw_file_name, flags)
-            // Data file is empty, just initialize an empty index and an empty hash file with an empty bucket
-            hash_index = new ExtendibleHash<global_depth>{};
-            Bucket<RecordType> emptyBucket{};
+            // Data file is empty, just initialize an empty index and an empty hash file with two empty buckets
+            Bucket<RecordType> bucket_0{};
+            Bucket<RecordType> bucket_1{};
+            hash_index = new ExtendibleHash<global_depth>{sizeof(bucket_0)};
             SEEK_ALL(hash_file, 0)
             PRINT_FLAGS(hash_file)
-            hash_file.write((char *) &emptyBucket, sizeof(emptyBucket));
+            hash_file.write((char *) &bucket_0, sizeof(bucket_0));
+            hash_file.write((char *) &bucket_1, sizeof(bucket_1));
             PRINT_FLAGS(hash_file)
             hash_file.close();
             // Data file is not empty, construct the index accordingly (insert the entries)

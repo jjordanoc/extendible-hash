@@ -95,6 +95,10 @@ void create_index_file() {
 }
 
 int main() {
-//    create_index_file();
-//    std::cout << ?
+//    create_file();
+    std::hash<int> hsh{};
+    constexpr std::size_t global_depth = 3;
+//    char name[20];
+//    readFromConsole(name, 20);
+    std::cout << std::bitset<global_depth>{hsh(21) % (1 << global_depth)}.to_string() << std::endl;
 }
