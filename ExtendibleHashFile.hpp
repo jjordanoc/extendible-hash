@@ -2,10 +2,10 @@
 #define EXTENDIBLE_HASH_EXTENDIBLEHASHFILE_HPP
 
 #include <bitset>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <vector>
-#include <cmath>
 
 /*
  * File I/O Macro definitions
@@ -17,8 +17,8 @@
         throw std::runtime_error("Could not open file."); \
     }
 
-#define SAFE_FILE_CREATE_IF_NOT_EXISTS(file, file_name)          \
-    file.open(file_name, std::ios::app);          \
+#define SAFE_FILE_CREATE_IF_NOT_EXISTS(file, file_name)   \
+    file.open(file_name, std::ios::app);                  \
     if (!file.is_open()) {                                \
         throw std::runtime_error("Could not open file."); \
     }                                                     \
@@ -29,19 +29,13 @@
  * Defines a macro with optional parameters for seeking both file pointers at once
  */
 
-#define SEEK_ALL_2(file, pos) \
-    file.seekg(pos);          \
+#define SEEK_ALL(file, pos) \
+    file.seekg(pos);        \
     file.seekp(pos);
 
-#define SEEK_ALL_3(file, pos, relative) \
-    file.seekg(pos, relative);          \
+#define SEEK_ALL_RELATIVE(file, pos, relative) \
+    file.seekg(pos, relative);                 \
     file.seekp(pos, relative);
-
-#define SEEK_ALL_X(x, file, pos, relative, FUNC, ...) FUNC
-
-#define SEEK_ALL(...) SEEK_ALL_X(, ##__VA_ARGS__,         \
-                                 SEEK_ALL_3(__VA_ARGS__), \
-                                 SEEK_ALL_2(__VA_ARGS__))
 
 #define TELL(file) file.tellp()
 
@@ -50,10 +44,13 @@
  */
 
 #define PRINT_FLAGS(file) \
-std::cout << std::boolalpha << "Good: "  << file.good() << " Eof: " << file.eof() << " Bad: " << file.bad() << " Fail: " << file.fail() << std::endl;
+    std::cout << std::boolalpha << "Good: " << file.good() << " Eof: " << file.eof() << " Bad: " << file.bad() << " Fail: " << file.fail() << std::endl;
 
 #define PRINT_SIZE(T) \
-std::cout << "Size: " << sizeof(T) << std::endl;
+    std::cout << "Size: " << sizeof(T) << std::endl;
+
+#define PRINT_TELL(file) \
+    std::cout << "tellg: " << file.tellg() << " tellp: " << file.tellp() << std::endl;
 
 /*
  * Definitions of constants related to Disk Space Management
@@ -83,18 +80,18 @@ struct Bucket {
     RecordType records[MAX_RECORDS_PER_BUCKET];// < Stores the data of the records themselves
     long next = -1;                            // < Stores a reference to the next bucket in the chain (if it exists)
     Bucket() = default;
-//    explicit Bucket(std::fstream &hash_file) {
-//        char *block_buffer = new char[BLOCK_SIZE];
-//        hash_file.read(block_buffer, BLOCK_SIZE);
-//        std::stringstream buf{std::string{block_buffer, BLOCK_SIZE}};
-//        buf.read((char *) &size, sizeof(long));
-//        for (int i = 0; i < size; ++i) {
-//            buf.read((char *) &(records[i]), sizeof(RecordType));
-//        }
-//        SEEK_ALL(hash_file, sizeof(long), std::ios::end)
-//        buf.read((char *) &next, sizeof(long));
-//        delete[] block_buffer;
-//    }
+    //    explicit Bucket(std::fstream &hash_file) {
+    //        char *block_buffer = new char[BLOCK_SIZE];
+    //        hash_file.read(block_buffer, BLOCK_SIZE);
+    //        std::stringstream buf{std::string{block_buffer, BLOCK_SIZE}};
+    //        buf.read((char *) &size, sizeof(long));
+    //        for (int i = 0; i < size; ++i) {
+    //            buf.read((char *) &(records[i]), sizeof(RecordType));
+    //        }
+    //        SEEK_ALL(hash_file, sizeof(long), std::ios::end)
+    //        buf.read((char *) &next, sizeof(long));
+    //        delete[] block_buffer;
+    //    }
 };
 
 template<typename std::size_t D>
@@ -118,7 +115,7 @@ public:
     }
     explicit ExtendibleHash(std::fstream &index_file) {
         // Get the size of the index file
-        SEEK_ALL(index_file, 0, std::ios::end)
+        SEEK_ALL_RELATIVE(index_file, 0, std::ios::end)
         std::size_t index_file_size = TELL(index_file);
         // Read the entire index file (should fit in RAM)
         SEEK_ALL(index_file, 0)
@@ -138,11 +135,11 @@ public:
     void write_to_disk(std::fstream &index_file) {
         const std::size_t index_size = hash_entries.size() * sizeof(ExtendibleHashEntry<D>);
         char *buffer = new char[index_size];
-    // Pack the binary char buffer
+        // Pack the binary char buffer
         std::stringstream buf{std::string{buffer, index_size}};
 
         for (std::size_t i = 0; i < hash_entries.size(); ++i) {
-            std::cout << "depth: " << hash_entries[i].local_depth <<  "seq: " << hash_entries[i].sequence <<  "ref: " << hash_entries[i].bucket_ref << std::endl;
+            std::cout << "depth: " << hash_entries[i].local_depth << "seq: " << hash_entries[i].sequence << "ref: " << hash_entries[i].bucket_ref << std::endl;
             buf.write((char *) &(hash_entries[i]), sizeof(hash_entries[i]));
         }
         std::cout << buf.str() << std::endl;
@@ -178,12 +175,12 @@ template<typename KeyType,
          typename Index,
          std::size_t global_depth = 32>// < Maximum depth of the binary index key (defaults to 32, like in most systems)
 class ExtendibleHashFile {
-    std::fstream raw_file;                                                           //< File object used to manage acces to the raw data file (not used if index is already created)
-    std::string raw_file_name;                                                       //< Raw data file name
-    std::fstream index_file;                                                         // < File object used to manage the index
-    std::string index_file_name;                                                     //< Name of index raw_file to be created
-    std::fstream hash_file;                                                          // < File object used to access hash-based indexed file
-    std::string hash_file_name;                                                      // < Hash-based indexed file name
+    std::fstream raw_file;                                                                //< File object used to manage acces to the raw data file (not used if index is already created)
+    std::string raw_file_name;                                                            //< Raw data file name
+    std::fstream index_file;                                                              // < File object used to manage the index
+    std::string index_file_name;                                                          //< Name of index raw_file to be created
+    std::fstream hash_file;                                                               // < File object used to access hash-based indexed file
+    std::string hash_file_name;                                                           // < Hash-based indexed file name
     const std::ios_base::openmode flags = std::ios::in | std::ios::binary | std::ios::out;// < Flags used in all accesses to disk
 
     /* Generic purposes member variables */
@@ -196,28 +193,30 @@ class ExtendibleHashFile {
     std::string get_hash_sequence(RecordType &record) {
         auto key = index(record);
         auto hash_key = hash_function(key);
-        auto bit_set = std::bitset<global_depth>{hash_key % (1<<global_depth)};
+        auto bit_set = std::bitset<global_depth>{hash_key % (1 << global_depth)};
         std::cout << bit_set.to_string() << std::endl;
         return bit_set.to_string();
     }
+
 public:
     explicit ExtendibleHashFile(const std::string &fileName, bool primaryKey, Index index, Greater greater) : raw_file_name(fileName), primary_key(primaryKey), index(index), greater(greater) {
         hash_file_name = raw_file_name + ".ehash";
         index_file_name = raw_file_name + ".ehashind";
         // Create needed files if they don't exist
-//        SAFE_FILE_CREATE_IF_NOT_EXISTS(hash_file, hash_file_name)
+        SAFE_FILE_CREATE_IF_NOT_EXISTS(hash_file, hash_file_name)
         SAFE_FILE_CREATE_IF_NOT_EXISTS(index_file, index_file_name)
         // Load or create index file
         SAFE_FILE_OPEN(index_file, index_file_name, flags)
-//        SAFE_FILE_OPEN(hash_file, hash_file_name, flags
-        hash_file.open(hash_file_name, std::ios::out | std::ios::binary | std::ios::app);
+        SAFE_FILE_OPEN(hash_file, hash_file_name, flags)
+        SEEK_ALL(index_file, 0)
+        SEEK_ALL(hash_file, 0)
         // If the index file is empty, initialize the index
-        if (true) { // index_file.peek() == std::ifstream::traits_type::eof() && hash_file.peek() == std::ifstream::traits_type::eof()
+        if (index_file.peek() == std::ifstream::traits_type::eof() && hash_file.peek() == std::ifstream::traits_type::eof()) {//
             SAFE_FILE_OPEN(raw_file, raw_file_name, flags)
             // Data file is empty, just initialize an empty index and an empty hash file with an empty bucket
             hash_index = new ExtendibleHash<global_depth>{};
             Bucket<RecordType> emptyBucket{};
-//            SEEK_ALL(hash_file, 0, std::ios::end)
+            SEEK_ALL(hash_file, 0)
             PRINT_FLAGS(hash_file)
             hash_file.write((char *) &emptyBucket, sizeof(emptyBucket));
             PRINT_FLAGS(hash_file)
@@ -234,7 +233,7 @@ public:
                 }
             }
             raw_file.close();
-        } else if (index_file.peek() != std::ifstream::traits_type::eof() || hash_file.peek() != std::ifstream::traits_type::eof()) {
+        } else if ((index_file.peek() != std::ifstream::traits_type::eof() && hash_file.peek() == std::ifstream::traits_type::eof()) || (index_file.peek() == std::ifstream::traits_type::eof() && hash_file.peek() != std::ifstream::traits_type::eof())) {
             hash_file.close();
             index_file.close();
             throw std::runtime_error("Corrupt ExtendibleHashFile file structure.");
@@ -279,7 +278,9 @@ public:
         long bucket_ref = hash_index->lookup(hash_sequence);
         std::cout << bucket_ref << std::endl;
         // Insert record into bucket bucket_ref of the hash file
+        PRINT_TELL(hash_file)
         SEEK_ALL(hash_file, bucket_ref)
+        PRINT_TELL(hash_file)
         // Read and update bucket bucket_ref
         PRINT_FLAGS(hash_file)
         Bucket<RecordType> bucket{};
@@ -288,7 +289,9 @@ public:
         bucket.records[bucket.size++] = record;
         PRINT_FLAGS(hash_file)
         // Write bucket bucket_ref
+        PRINT_TELL(hash_file)
         SEEK_ALL(hash_file, bucket_ref)
+        PRINT_TELL(hash_file)
         hash_file.write((char *) &bucket, sizeof(bucket));
         hash_file.close();
     }
