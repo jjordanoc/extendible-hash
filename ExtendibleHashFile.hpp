@@ -45,8 +45,15 @@
 
 #define TELL(file) file.tellp()
 
+/*
+ * Debugging tools
+ */
+
 #define PRINT_FLAGS(file) \
 std::cout << std::boolalpha << "Good: "  << file.good() << " Eof: " << file.eof() << " Bad: " << file.bad() << " Fail: " << file.fail() << std::endl;
+
+#define PRINT_SIZE(T) \
+std::cout << "Size: " << sizeof(T) << std::endl;
 
 /*
  * Definitions of constants related to Disk Space Management
@@ -76,18 +83,18 @@ struct Bucket {
     RecordType records[MAX_RECORDS_PER_BUCKET];// < Stores the data of the records themselves
     long next = -1;                            // < Stores a reference to the next bucket in the chain (if it exists)
     Bucket() = default;
-    explicit Bucket(std::fstream &hash_file) {
-        char *block_buffer = new char[BLOCK_SIZE];
-        hash_file.read(block_buffer, BLOCK_SIZE);
-        std::stringstream buf{std::string{block_buffer, BLOCK_SIZE}};
-        buf.read((char *) &size, sizeof(long));
-        for (int i = 0; i < size; ++i) {
-            buf.read((char *) &(records[i]), sizeof(RecordType));
-        }
-        SEEK_ALL(hash_file, sizeof(long), std::ios::end)
-        buf.read((char *) &next, sizeof(long));
-        delete[] block_buffer;
-    }
+//    explicit Bucket(std::fstream &hash_file) {
+//        char *block_buffer = new char[BLOCK_SIZE];
+//        hash_file.read(block_buffer, BLOCK_SIZE);
+//        std::stringstream buf{std::string{block_buffer, BLOCK_SIZE}};
+//        buf.read((char *) &size, sizeof(long));
+//        for (int i = 0; i < size; ++i) {
+//            buf.read((char *) &(records[i]), sizeof(RecordType));
+//        }
+//        SEEK_ALL(hash_file, sizeof(long), std::ios::end)
+//        buf.read((char *) &next, sizeof(long));
+//        delete[] block_buffer;
+//    }
 };
 
 template<typename std::size_t D>
@@ -212,7 +219,7 @@ public:
             Bucket<RecordType> emptyBucket{};
 //            SEEK_ALL(hash_file, 0, std::ios::end)
             PRINT_FLAGS(hash_file)
-            hash_file.write((char *) &emptyBucket, BLOCK_SIZE);
+            hash_file.write((char *) &emptyBucket, sizeof(emptyBucket));
             PRINT_FLAGS(hash_file)
             hash_file.close();
             // Data file is not empty, construct the index accordingly (insert the entries)
@@ -272,16 +279,17 @@ public:
         long bucket_ref = hash_index->lookup(hash_sequence);
         std::cout << bucket_ref << std::endl;
         // Insert record into bucket bucket_ref of the hash file
-
         SEEK_ALL(hash_file, bucket_ref)
         // Read and update bucket bucket_ref
         PRINT_FLAGS(hash_file)
-        Bucket<RecordType> bucket{hash_file};
+        Bucket<RecordType> bucket{};
+        PRINT_SIZE(bucket)
+        hash_file.read((char *) &bucket, sizeof(bucket));
         bucket.records[bucket.size++] = record;
         PRINT_FLAGS(hash_file)
         // Write bucket bucket_ref
         SEEK_ALL(hash_file, bucket_ref)
-        hash_file.write((char *) &bucket, BLOCK_SIZE);
+        hash_file.write((char *) &bucket, sizeof(bucket));
         hash_file.close();
     }
 
