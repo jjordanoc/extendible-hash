@@ -111,6 +111,19 @@ public:
             }
         }
     }
+    void write_to_disk(std::fstream &index_file) {
+        std::size_t index_size = hash_entries.size() * sizeof(ExtendibleHashEntry<D>);
+        char buffer[index_size];
+        // Pack the binary char buffer
+        std::stringstream buf(std::string(buffer, index_size));
+        for (std::size_t i = 0; i < hash_entries.size(); ++i) {
+            std::cout << "depth: " << hash_entries[i].local_depth <<  "seq: " << hash_entries[i].sequence <<  "ref: " << hash_entries[i].bucket_ref << std::endl;
+            buf.write((char *) &(hash_entries[i]), sizeof(hash_entries[i]));
+        }
+        std::cout << buf.str() << std::endl;
+        // Write buffer to disk
+        index_file.write(buf.str().c_str(), (long long) index_size);
+    }
     void insert(const std::string &hash_sequence) {
     }
     long lookup(const std::string &hash_sequence) {
@@ -156,7 +169,7 @@ class ExtendibleHashFile {
 public:
     explicit ExtendibleHashFile(const std::string &fileName, bool primaryKey, Index index, Greater greater) : raw_file_name(fileName), primary_key(primaryKey), index(index), greater(greater) {
         hash_file_name = raw_file_name + ".ehash";
-        index_file_name = raw_file_name + "_index.ehashind";
+        index_file_name = raw_file_name + ".ehashind";
         // Create needed files if they don't exist
         SAFE_FILE_CREATE_IF_NOT_EXISTS(hash_file, hash_file_name)
         SAFE_FILE_CREATE_IF_NOT_EXISTS(index_file, index_file_name)
@@ -165,10 +178,15 @@ public:
         SAFE_FILE_OPEN(hash_file, hash_file_name, flags)
         // If the index file is empty, initialize the index
         if (index_file.peek() == std::ifstream::traits_type::eof() && hash_file.peek() == std::ifstream::traits_type::eof()) {
-            hash_file.close();
             SAFE_FILE_OPEN(raw_file, raw_file_name, flags)
-            // Data file is empty, just initialize an empty index
+            // Data file is empty, just initialize an empty index and an empty hash file with an empty bucket
             hash_index = new ExtendibleHash<global_depth>{};
+            SEEK_ALL(hash_file, 0)
+            Bucket<RecordType> emptyBucket{};
+            std::cout << hash_file.good() << std::endl;
+            hash_file.write((char *) &emptyBucket, BLOCK_SIZE);
+            std::cout << hash_file.good() << std::endl;
+            hash_file.close();
             // Data file is not empty, construct the index accordingly (insert the entries)
             if (raw_file.peek() != std::ifstream::traits_type::eof()) {
                 // Construct hash file (.ehash)
@@ -226,15 +244,25 @@ public:
         std::string hash_sequence = std::bitset<global_depth>(hash_function(index(record)) % global_depth).to_string();
         long bucket_ref = hash_index->lookup(hash_sequence);
         std::cout << bucket_ref << std::endl;
-        // Insert record into bucket bucket_ref of the data file
+        // Insert record into bucket bucket_ref of the hash file
+        Bucket<RecordType> bucket{};
+        SEEK_ALL(hash_file, bucket_ref)
+        // Read and update bucket bucket_ref
+        hash_file.read((char *) &bucket, BLOCK_SIZE);
+        bucket.records[bucket.size++] = record;
+        std::cout << hash_file.good() << std::endl;
+        // Write bucket bucket_ref
+        SEEK_ALL(hash_file, bucket_ref)
+        hash_file.write((char *) &bucket, BLOCK_SIZE);
         hash_file.close();
     }
 
     virtual ~ExtendibleHashFile() {
         // Write hash_index to disk
         SAFE_FILE_OPEN(index_file, index_file_name, flags | std::ios::trunc)
-        index_file.write()
+        hash_index->write_to_disk(index_file);
         delete hash_index;
+        index_file.close();
     }
 };
 

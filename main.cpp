@@ -27,6 +27,6 @@ int main() {
     };
 
     ExtendibleHashFile<char *, Record, decltype(greater), decltype(index), 3> extendibleHash{"data.dat", true, index, greater};
-    extendibleHash.search("Juan               ");
+//    extendibleHash.search("Juan               ");
     return 0;
 }
