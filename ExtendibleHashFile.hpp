@@ -56,7 +56,7 @@
  * Definitions of constants related to Disk Space Management
  */
 
-#define BLOCK_SIZE 1024
+#define BLOCK_SIZE 256
 
 /*
  * Each bucket should fit in RAM.
@@ -99,6 +99,14 @@ struct ExtendibleHashEntry {
     std::size_t local_depth = 1;// < Stores the local depth of the bucket
     char sequence[D + 1] = {};  // < Stores the binary hash sequence
     long bucket_ref = 0;        // < Stores a reference to a page in disk
+
+    ExtendibleHashEntry() = default;
+
+    ExtendibleHashEntry(const ExtendibleHashEntry<D> &other) {
+        local_depth = other.local_depth;
+        std::memcpy(sequence, other.sequence, D+1);
+        bucket_ref = other.bucket_ref;
+    }
 };
 
 template<typename std::size_t D>
@@ -154,22 +162,52 @@ public:
     }
     void insert(const std::string &hash_sequence) {
     }
-    long lookup(const std::string &hash_sequence) {
-        for (const auto &entry: hash_entries) {
-            auto local_depth = entry.local_depth;
+
+    /*
+     * Looks for an entry.
+     * Returns a pair containing the position of the entry (first), and the bucket it references (second)
+     */
+    std::pair<std::size_t, long> lookup(const std::string &hash_sequence) {
+        for (std::size_t i = 0; i < hash_entries.size(); ++i) {
+            auto local_depth = hash_entries[i].local_depth;
             bool eq = true;
             for (int j = 0; j < local_depth; ++j) {
                 // If the sequences are different given the local depth, this is not the bucket we're looking for
-                if (hash_sequence[D - 1 - j] != entry.sequence[D - 1 - j]) {
+                if (hash_sequence[D - 1 - j] != hash_entries[i].sequence[D - 1 - j]) {
                     eq = false;
                     break;
                 }
             }
             if (eq) {
-                return entry.bucket_ref;
+                return std::make_pair(i, hash_entries[i].bucket_ref);
             }
         }
         throw std::runtime_error("Could not find given hash sequence on ExtendibleHash.");
+    }
+
+    /*
+     * Splits an entry.
+     * Returns a pair containing a bool which indicates if the split was successful (first), and a number indicating the old local depth (second).
+     */
+    std::pair<bool, std::size_t> split_entry(const std::size_t &entry_index, const long &new_bucket_pos) {
+        std::size_t local_depth = hash_entries[entry_index].local_depth;
+        if (local_depth < D) {
+            // Create a copy of the actual entry
+            ExtendibleHashEntry<D> entry_1{hash_entries[entry_index]};
+            // Update the sequence to have a 1 at the local_depth position
+            entry_1.sequence[local_depth] = '1';
+            // Reference the new bucket's position
+            entry_1.bucket_ref = new_bucket_pos;
+            // Increase the local depth
+            hash_entries[entry_index].local_depth++;
+            entry_1.local_depth++;
+            // Add the new entry to the index
+            hash_entries.push_back(entry_1);
+            return std::make_pair(true, local_depth);
+        }
+        else {
+            return std::make_pair(false, 0);
+        }
     }
 };
 
@@ -199,7 +237,7 @@ class ExtendibleHashFile {
         auto key = index(record);
         auto hash_key = hash_function(key);
         auto bit_set = std::bitset<global_depth>{hash_key % (1 << global_depth)};
-        std::cout << bit_set.to_string() << std::endl;
+//        std::cout << bit_set.to_string() << std::endl;
         return bit_set.to_string();
     }
 
@@ -256,50 +294,61 @@ public:
 
     std::vector<RecordType> search(KeyType key) {
         std::vector<RecordType> result;
-        //        SAFE_FILE_OPEN(raw_file, raw_file_name, flags)
-        //        SAFE_FILE_OPEN(index_file, index_file_name, flags)
-        //        std::string hash_sequence = std::bitset<global_depth>(hash_function(key) % global_depth).to_string();
-        //        // Get the size of the index raw_file
-        //        SEEK_ALL(index_file, 0, std::ios::end)
-        //        std::size_t index_file_size = TELL(index_file);
-        //        // Read the entire index raw_file
-        //        SEEK_ALL(index_file, 0)
-        //        char buffer[index_file_size];
-        //        index_file.read(buffer, index_file_size);
-        //        HashIndexPage<global_depth> hashIndexPage{buffer};
-        //        raw_file.close();
-        //        index_file.close();
-        SAFE_FILE_OPEN(raw_file, raw_file_name, flags)
-        std::string hash_sequence = std::bitset<global_depth>(hash_function(key) % global_depth).to_string();
-        long bucket_ref = hash_index->lookup(hash_sequence);
-        SEEK_ALL(raw_file, bucket_ref)
-        Bucket<RecordType> bucket{};
-        raw_file.read((char *) &bucket, BLOCK_SIZE);
-        raw_file.close();
+        // TODO
         return result;
     }
 
     void insert(RecordType &record) {
         SAFE_FILE_OPEN(hash_file, hash_file_name, flags)
         std::string hash_sequence = get_hash_sequence(record);
-        long bucket_ref = hash_index->lookup(hash_sequence);
+        auto [entry_index, bucket_ref] = hash_index->lookup(hash_sequence);
         std::cout << bucket_ref << std::endl;
         // Insert record into bucket bucket_ref of the hash file
         PRINT_TELL(hash_file)
         SEEK_ALL(hash_file, bucket_ref)
         PRINT_TELL(hash_file)
-        // Read and update bucket bucket_ref
+        // Read and update bucket bucket_ref if it's not full
         PRINT_FLAGS(hash_file)
         Bucket<RecordType> bucket{};
         PRINT_SIZE(bucket)
         hash_file.read((char *) &bucket, sizeof(bucket));
-        bucket.records[bucket.size++] = record;
-        PRINT_FLAGS(hash_file)
-        // Write bucket bucket_ref
-        PRINT_TELL(hash_file)
-        SEEK_ALL(hash_file, bucket_ref)
-        PRINT_TELL(hash_file)
-        hash_file.write((char *) &bucket, sizeof(bucket));
+        if (bucket.size < MAX_RECORDS_PER_BUCKET) {
+            // Append record
+            bucket.records[bucket.size++] = record;
+            PRINT_FLAGS(hash_file)
+            // Write bucket bucket_ref
+            PRINT_TELL(hash_file)
+            SEEK_ALL(hash_file, bucket_ref)
+            PRINT_TELL(hash_file)
+            hash_file.write((char *) &bucket, sizeof(bucket));
+        }
+        else {
+            // Create new buckets and split hash index if possible
+            Bucket<RecordType> bucket_0{};
+            Bucket<RecordType> bucket_1{};
+            auto [could_split, local_depth] = hash_index->split_entry(entry_index, TELL(hash_file));
+            // Split was successful, rehash the current content of the bucket into the two new buckets
+            if (could_split) {
+                for (int i = 0; i < bucket.size; ++i) {
+                    std::string ith_hash_seq = get_hash_sequence(bucket.records[i]);
+                    if (ith_hash_seq[local_depth] == '0') {
+                        bucket_0.records[bucket_0.size++] = bucket.records[i];
+                    }
+                    else {
+                        bucket_1.records[bucket_1.size++] = bucket.records[i];
+                    }
+                }
+                // Write the two new buckets to secondary storage
+                SEEK_ALL(hash_file, bucket_ref)
+                hash_file.write((char *) &bucket_0, sizeof(bucket_0));
+                SEEK_ALL_RELATIVE(hash_file, 0, std::ios::end)
+                hash_file.write((char *) &bucket_1, sizeof(bucket_1));
+            }
+            // Split was unsuccessful, add an overflow bucket
+            else {
+                // TODO
+            }
+        }
         hash_file.close();
     }
 
