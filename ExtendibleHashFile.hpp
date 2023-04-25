@@ -104,7 +104,7 @@ struct ExtendibleHashEntry {
 
     ExtendibleHashEntry(const ExtendibleHashEntry<D> &other) {
         local_depth = other.local_depth;
-        std::memcpy(sequence, other.sequence, D+1);
+        std::memcpy(sequence, other.sequence, D + 1);
         bucket_ref = other.bucket_ref;
     }
 };
@@ -189,23 +189,22 @@ public:
      * Splits an entry.
      * Returns a pair containing a bool which indicates if the split was successful (first), and a number indicating the old local depth (second).
      */
-    std::pair<bool, std::size_t> split_entry(const std::size_t &entry_index, const long &new_bucket_pos) {
+    std::pair<bool, std::size_t> split_entry(const std::size_t &entry_index, const long &new_bucket_ref) {
         std::size_t local_depth = hash_entries[entry_index].local_depth;
         if (local_depth < D) {
             // Create a copy of the actual entry
             ExtendibleHashEntry<D> entry_1{hash_entries[entry_index]};
-            // Update the sequence to have a 1 at the local_depth position
-            entry_1.sequence[local_depth] = '1';
+            // Update the sequence to have a 1 at the local_depth position (from right to left)
+            entry_1.sequence[D - 1 - local_depth] = '1';
             // Reference the new bucket's position
-            entry_1.bucket_ref = new_bucket_pos;
+            entry_1.bucket_ref = new_bucket_ref;
             // Increase the local depth
             hash_entries[entry_index].local_depth++;
             entry_1.local_depth++;
             // Add the new entry to the index
             hash_entries.push_back(entry_1);
             return std::make_pair(true, local_depth);
-        }
-        else {
+        } else {
             return std::make_pair(false, 0);
         }
     }
@@ -237,7 +236,7 @@ class ExtendibleHashFile {
         auto key = index(record);
         auto hash_key = hash_function(key);
         auto bit_set = std::bitset<global_depth>{hash_key % (1 << global_depth)};
-//        std::cout << bit_set.to_string() << std::endl;
+        //        std::cout << bit_set.to_string() << std::endl;
         return bit_set.to_string();
     }
 
@@ -321,33 +320,77 @@ public:
             SEEK_ALL(hash_file, bucket_ref)
             PRINT_TELL(hash_file)
             hash_file.write((char *) &bucket, sizeof(bucket));
-        }
-        else {
+        } else {
             // Create new buckets and split hash index if possible
             Bucket<RecordType> bucket_0{};
             Bucket<RecordType> bucket_1{};
+            SEEK_ALL_RELATIVE(hash_file, 0, std::ios::end)
+            // Split the current hash entry and save a pointer to the end of the file (new bucket position)
             auto [could_split, local_depth] = hash_index->split_entry(entry_index, TELL(hash_file));
             // Split was successful, rehash the current content of the bucket into the two new buckets
             if (could_split) {
                 for (int i = 0; i < bucket.size; ++i) {
                     std::string ith_hash_seq = get_hash_sequence(bucket.records[i]);
-                    // TODO: Fix, remember that binary strings are read from right to left
-                    if (ith_hash_seq[local_depth] == '0') {
+                    if (ith_hash_seq[global_depth - 1 - local_depth] == '0') {
                         bucket_0.records[bucket_0.size++] = bucket.records[i];
-                    }
-                    else {
+                    } else {
                         bucket_1.records[bucket_1.size++] = bucket.records[i];
                     }
                 }
-                // Write the two new buckets to secondary storage
-                SEEK_ALL(hash_file, bucket_ref)
-                hash_file.write((char *) &bucket_0, sizeof(bucket_0));
-                SEEK_ALL_RELATIVE(hash_file, 0, std::ios::end)
-                hash_file.write((char *) &bucket_1, sizeof(bucket_1));
+                if (bucket_0.size != MAX_RECORDS_PER_BUCKET && bucket_1.size != MAX_RECORDS_PER_BUCKET) {
+                    // Insert the new record
+                    if (hash_sequence[global_depth - 1 - local_depth] == '0') {
+                        bucket_0.records[bucket_0.size++] = record;
+                    } else {
+                        bucket_1.records[bucket_1.size++] = record;
+                    }
+                    // Write the two new buckets to secondary storage
+                    SEEK_ALL(hash_file, bucket_ref)
+                    hash_file.write((char *) &bucket_0, sizeof(bucket_0));
+                    SEEK_ALL_RELATIVE(hash_file, 0, std::ios::end)
+                    hash_file.write((char *) &bucket_1, sizeof(bucket_1));
+                } else {
+                    // Write the two new buckets to secondary storage
+                    SEEK_ALL(hash_file, bucket_ref)
+                    hash_file.write((char *) &bucket_0, sizeof(bucket_0));
+                    SEEK_ALL_RELATIVE(hash_file, 0, std::ios::end)
+                    hash_file.write((char *) &bucket_1, sizeof(bucket_1));
+                    // Insert new record recursively (could not insert it in the current split)
+                    insert(record);
+                }
+
             }
-            // Split was unsuccessful, add an overflow bucket
+            // Split was unsuccessful. Find overflow bucket or create one
             else {
-                // TODO
+                long parent_bucket_ref = bucket_ref;
+                while (true) {
+                    // Go to the next overflow bucket and check if it's full
+                    if (bucket.next != -1) {
+                        parent_bucket_ref = bucket.next;
+                        SEEK_ALL(hash_file, bucket.next)
+                        hash_file.read((char *) &bucket, sizeof(bucket));
+                        // If the next overflow bucket is not full, insert to it
+                        if (bucket.size < MAX_RECORDS_PER_BUCKET) {
+                            SEEK_ALL(hash_file, parent_bucket_ref)
+                            bucket.records[bucket.size++] = record;
+                            hash_file.write((char *) &bucket, sizeof(bucket));
+                            break;
+                        }
+                    }
+                    // Create new overflow bucket and reference it in the parent bucket
+                    else {
+                        // Create new bucket
+                        SEEK_ALL_RELATIVE(hash_file, 0, std::ios::end)
+                        bucket_0.records[bucket_0.size++] = record;
+                        long new_bucket_ref = TELL(hash_file);
+                        hash_file.write((char *) &bucket_0, sizeof(bucket_0));
+                        // Update parent reference
+                        SEEK_ALL(hash_file, parent_bucket_ref)
+                        bucket.next = new_bucket_ref;
+                        hash_file.write((char *) &bucket, sizeof(bucket));
+                        break;
+                    }
+                }
             }
         }
         hash_file.close();
