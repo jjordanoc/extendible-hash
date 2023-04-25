@@ -331,6 +331,7 @@ public:
             if (could_split) {
                 for (int i = 0; i < bucket.size; ++i) {
                     std::string ith_hash_seq = get_hash_sequence(bucket.records[i]);
+                    // TODO: Fix, remember that binary strings are read from right to left
                     if (ith_hash_seq[local_depth] == '0') {
                         bucket_0.records[bucket_0.size++] = bucket.records[i];
                     }
