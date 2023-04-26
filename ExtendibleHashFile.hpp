@@ -213,8 +213,9 @@ public:
 
 template<typename KeyType,
          typename RecordType,
-         typename Greater,
+         typename Equal,
          typename Index,
+         typename Hash,
          std::size_t global_depth = 32>// < Maximum depth of the binary index key (defaults to 32, like in most systems)
 class ExtendibleHashFile {
     std::fstream raw_file;                                                                //< File object used to manage acces to the raw data file (not used if index is already created)
@@ -228,20 +229,25 @@ class ExtendibleHashFile {
     /* Generic purposes member variables */
     bool primary_key;                                       //< Is `true` when indexing a primary key and `false` otherwise
     Index index;                                            //< Receives a `RecordType` and returns his `KeyType` associated
-    Greater greater;                                        //< Returns `true` if the first parameter is greater than the second and `false` otherwise
-    std::hash<KeyType> hash_function = std::hash<KeyType>{};// < Hash function
+    Equal equal;                                        //< Returns `true` if the first parameter is greater than the second and `false` otherwise
+    Hash hash_function;// < Hash function
     ExtendibleHash<global_depth> *hash_index;               // < Extendible hash index (stored in RAM)
 
     std::string get_hash_sequence(RecordType &record) {
         auto key = index(record);
         auto hash_key = hash_function(key);
         auto bit_set = std::bitset<global_depth>{hash_key % (1 << global_depth)};
-        //        std::cout << bit_set.to_string() << std::endl;
+        return bit_set.to_string();
+    }
+
+    std::string get_hash_sequence(KeyType key) {
+        auto hash_key = hash_function(key);
+        auto bit_set = std::bitset<global_depth>{hash_key % (1 << global_depth)};
         return bit_set.to_string();
     }
 
 public:
-    explicit ExtendibleHashFile(const std::string &fileName, bool primaryKey, Index index, Greater greater) : raw_file_name(fileName), primary_key(primaryKey), index(index), greater(greater) {
+    explicit ExtendibleHashFile(const std::string &fileName, bool primaryKey, Index index, Equal equal, Hash hash) : raw_file_name(fileName), primary_key(primaryKey), index(index), equal(equal), hash_function(hash) {
         hash_file_name = raw_file_name + ".ehash";
         index_file_name = raw_file_name + ".ehashind";
         // Create needed files if they don't exist
@@ -286,14 +292,44 @@ public:
         else {
             hash_file.close();
             hash_index = new ExtendibleHash<global_depth>{index_file};
-            //            hash_index->lookup("101");
         }
         index_file.close();
     }
 
     std::vector<RecordType> search(KeyType key) {
+        SAFE_FILE_OPEN(hash_file, hash_file_name, flags)
         std::vector<RecordType> result;
-        // TODO
+        if (primary_key) {
+            // TODO
+        }
+        // Search for all records with the value of key
+        else {
+            std::string hash_sequence = get_hash_sequence(key);
+            auto [entry_index, bucket_ref] = hash_index->lookup(hash_sequence);
+            // Read bucket at position bucket_ref
+            SEEK_ALL(hash_file, bucket_ref)
+            Bucket<RecordType> bucket{};
+            hash_file.read((char *) &bucket, sizeof(bucket));
+            // Search in chain of buckets
+            while (true) {
+                for (int i = 0; i < bucket.size; ++i) {
+                    if (equal(key, index(bucket.records[i]))) {
+                        // Found record. Add
+                        result.push_back(bucket.records[i]);
+                    }
+                }
+                // If there is a next bucket, explore it
+                if (bucket.next != -1) {
+                    SEEK_ALL(hash_file, bucket.next)
+                    hash_file.read((char *) &bucket, sizeof(bucket));
+                }
+                else {
+                    break;
+                }
+            }
+
+        }
+        hash_file.close();
         return result;
     }
 
@@ -303,22 +339,15 @@ public:
         auto [entry_index, bucket_ref] = hash_index->lookup(hash_sequence);
         std::cout << bucket_ref << std::endl;
         // Insert record into bucket bucket_ref of the hash file
-        PRINT_TELL(hash_file)
         SEEK_ALL(hash_file, bucket_ref)
-        PRINT_TELL(hash_file)
         // Read and update bucket bucket_ref if it's not full
-        PRINT_FLAGS(hash_file)
         Bucket<RecordType> bucket{};
-        PRINT_SIZE(bucket)
         hash_file.read((char *) &bucket, sizeof(bucket));
         if (bucket.size < MAX_RECORDS_PER_BUCKET) {
             // Append record
             bucket.records[bucket.size++] = record;
-            PRINT_FLAGS(hash_file)
             // Write bucket bucket_ref
-            PRINT_TELL(hash_file)
             SEEK_ALL(hash_file, bucket_ref)
-            PRINT_TELL(hash_file)
             hash_file.write((char *) &bucket, sizeof(bucket));
         } else {
             // Create new buckets and split hash index if possible

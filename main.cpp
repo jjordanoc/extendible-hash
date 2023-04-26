@@ -1,5 +1,5 @@
-#include <iostream>
 #include <functional>
+#include <iostream>
 #include <sstream>
 
 #include "ExtendibleHashFile.hpp"
@@ -27,19 +27,23 @@ struct Record {
 
 
 int main() {
-    std::function<bool(char *, char *)> greater = [](char * a, char * b) {
-        return std::string(a) > std::string(b);
+    std::function<bool(int, int)> equal = [](int a, int b) {
+        return a == b;
     };
 
-    std::function<int (Record &)> index = [=](Record &record) {
+    std::function<int(Record &)> index = [=](Record &record) {
         return record.cycle;
     };
+    std::hash<int> hasher;
+    std::function<std::size_t (int)> hash = [&hasher](int key) {
+        return hasher(key);
+    };
 
-    ExtendibleHashFile<int, Record, decltype(greater), decltype(index), 3> extendibleHash{"data.dat", true, index, greater};
-    Record new_record{};
-    readFromConsole(new_record.code, 5);
-    readFromConsole(new_record.name, 20);
-    std::cin >> new_record.cycle;
-    extendibleHash.insert(new_record);
+    ExtendibleHashFile<int, Record, decltype(equal), decltype(index), decltype(hash), 3> extendibleHash{"data.dat", false, index, equal, hash};
+    //    Record new_record{};
+    //    readFromConsole(new_record.code, 5);
+    //    readFromConsole(new_record.name, 20);
+    //    std::cin >> new_record.cycle;
+    extendibleHash.search(1005);
     return 0;
 }
