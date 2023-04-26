@@ -150,12 +150,10 @@ public:
         char *buffer = new char[index_size];
         // Pack the binary char buffer
         std::stringstream buf{std::string{buffer, index_size}};
-
         for (std::size_t i = 0; i < hash_entries.size(); ++i) {
-            std::cout << "depth: " << hash_entries[i].local_depth << "seq: " << hash_entries[i].sequence << "ref: " << hash_entries[i].bucket_ref << std::endl;
+            //            std::cout << "depth: " << hash_entries[i].local_depth << "seq: " << hash_entries[i].sequence << "ref: " << hash_entries[i].bucket_ref << std::endl;
             buf.write((char *) &(hash_entries[i]), sizeof(hash_entries[i]));
         }
-        std::cout << buf.str() << std::endl;
         // Write buffer to disk
         index_file.write(buf.str().c_str(), (long long) index_size);
         delete[] buffer;
@@ -227,11 +225,11 @@ class ExtendibleHashFile {
     const std::ios_base::openmode flags = std::ios::in | std::ios::binary | std::ios::out;// < Flags used in all accesses to disk
 
     /* Generic purposes member variables */
-    bool primary_key;                                       //< Is `true` when indexing a primary key and `false` otherwise
-    Index index;                                            //< Receives a `RecordType` and returns his `KeyType` associated
-    Equal equal;                                        //< Returns `true` if the first parameter is greater than the second and `false` otherwise
-    Hash hash_function;// < Hash function
-    ExtendibleHash<global_depth> *hash_index;               // < Extendible hash index (stored in RAM)
+    bool primary_key;                        //< Is `true` when indexing a primary key and `false` otherwise
+    Index index;                             //< Receives a `RecordType` and returns his `KeyType` associated
+    Equal equal;                             //< Returns `true` if the first parameter is greater than the second and `false` otherwise
+    Hash hash_function;                      // < Hash function
+    ExtendibleHash<global_depth> *hash_index;// < Extendible hash index (stored in RAM)
 
     std::string get_hash_sequence(RecordType &record) {
         auto key = index(record);
@@ -247,6 +245,11 @@ class ExtendibleHashFile {
     }
 
 public:
+    /*
+     * Constructs the clustered index file.
+     * It creates 2 files: The index file (.ehashind) and the clustered data file (.ehash).
+     * Throws an exception if one of these files is empty.
+     */
     explicit ExtendibleHashFile(const std::string &fileName, bool primaryKey, Index index, Equal equal, Hash hash) : raw_file_name(fileName), primary_key(primaryKey), index(index), equal(equal), hash_function(hash) {
         hash_file_name = raw_file_name + ".ehash";
         index_file_name = raw_file_name + ".ehashind";
@@ -296,44 +299,58 @@ public:
         index_file.close();
     }
 
+
+    /*
+     * Searches a given key.
+     * Returns a vector of elements that match the given key.
+     * If the index was created for primary keys, it returns a single element.
+     * If no element matches the given key, it returns an empty vector.
+     */
     std::vector<RecordType> search(KeyType key) {
         SAFE_FILE_OPEN(hash_file, hash_file_name, flags)
         std::vector<RecordType> result;
-        if (primary_key) {
-            // TODO
-        }
-        // Search for all records with the value of key
-        else {
-            std::string hash_sequence = get_hash_sequence(key);
-            auto [entry_index, bucket_ref] = hash_index->lookup(hash_sequence);
-            // Read bucket at position bucket_ref
-            SEEK_ALL(hash_file, bucket_ref)
-            Bucket<RecordType> bucket{};
-            hash_file.read((char *) &bucket, sizeof(bucket));
-            // Search in chain of buckets
-            while (true) {
-                for (int i = 0; i < bucket.size; ++i) {
-                    if (equal(key, index(bucket.records[i]))) {
-                        // Found record. Add
-                        result.push_back(bucket.records[i]);
+        std::string hash_sequence = get_hash_sequence(key);
+        auto [entry_index, bucket_ref] = hash_index->lookup(hash_sequence);
+        // Read bucket at position bucket_ref
+        SEEK_ALL(hash_file, bucket_ref)
+        Bucket<RecordType> bucket{};
+        hash_file.read((char *) &bucket, sizeof(bucket));
+        // Search in chain of buckets
+        bool stop = false;
+        while (!stop) {
+            for (int i = 0; i < bucket.size; ++i) {
+                if (equal(key, index(bucket.records[i]))) {
+                    // Found record. Add
+                    result.push_back(bucket.records[i]);
+                    // If primary key, stop searching
+                    if (primary_key) {
+                        stop = true;
+                        break;
                     }
                 }
-                // If there is a next bucket, explore it
-                if (bucket.next != -1) {
-                    SEEK_ALL(hash_file, bucket.next)
-                    hash_file.read((char *) &bucket, sizeof(bucket));
-                }
-                else {
-                    break;
-                }
             }
-
+            // If there is a next bucket, explore it
+            if (bucket.next != -1) {
+                SEEK_ALL(hash_file, bucket.next)
+                hash_file.read((char *) &bucket, sizeof(bucket));
+            } else {
+                break;
+            }
         }
         hash_file.close();
         return result;
     }
 
+
+    /*
+     * Inserts a given key in the first bucket with available space in the overflow chain.
+     * If none of the buckets in the overflow chain have available space, it creates a new bucket.
+     */
     void insert(RecordType &record) {
+        // If the attribute is a primary key, we must check whether a record with the given key already exists
+        if (primary_key) {
+            if (!search(index(record)).empty()) throw std::runtime_error("Cannot insert a duplicate primary key.");
+        }
         SAFE_FILE_OPEN(hash_file, hash_file_name, flags)
         std::string hash_sequence = get_hash_sequence(record);
         auto [entry_index, bucket_ref] = hash_index->lookup(hash_sequence);

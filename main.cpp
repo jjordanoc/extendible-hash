@@ -35,15 +35,19 @@ int main() {
         return record.cycle;
     };
     std::hash<int> hasher;
-    std::function<std::size_t (int)> hash = [&hasher](int key) {
+    std::function<std::size_t(int)> hash = [&hasher](int key) {
         return hasher(key);
     };
 
     ExtendibleHashFile<int, Record, decltype(equal), decltype(index), decltype(hash), 3> extendibleHash{"data.dat", false, index, equal, hash};
-    //    Record new_record{};
-    //    readFromConsole(new_record.code, 5);
-    //    readFromConsole(new_record.name, 20);
-    //    std::cin >> new_record.cycle;
-    extendibleHash.search(1005);
+    Record new_record{};
+    readFromConsole(new_record.code, 5);
+    readFromConsole(new_record.name, 20);
+    std::cin >> new_record.cycle;
+    extendibleHash.insert(new_record);
+    //    auto result = extendibleHash.search(20);
+    //    for (auto &record : result) {
+    //        std::cout << record.to_string() << std::endl;
+    //    }
     return 0;
 }
