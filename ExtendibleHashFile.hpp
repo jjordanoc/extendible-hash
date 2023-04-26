@@ -79,19 +79,6 @@ struct Bucket {
     long size = 0;                             // < Stores the real amount of records the bucket holds
     RecordType records[MAX_RECORDS_PER_BUCKET];// < Stores the data of the records themselves
     long next = -1;                            // < Stores a reference to the next bucket in the chain (if it exists)
-    Bucket() = default;
-    //    explicit Bucket(std::fstream &hash_file) {
-    //        char *block_buffer = new char[BLOCK_SIZE];
-    //        hash_file.read(block_buffer, BLOCK_SIZE);
-    //        std::stringstream buf{std::string{block_buffer, BLOCK_SIZE}};
-    //        buf.read((char *) &size, sizeof(long));
-    //        for (int i = 0; i < size; ++i) {
-    //            buf.read((char *) &(records[i]), sizeof(RecordType));
-    //        }
-    //        SEEK_ALL(hash_file, sizeof(long), std::ios::end)
-    //        buf.read((char *) &next, sizeof(long));
-    //        delete[] block_buffer;
-    //    }
 };
 
 template<typename std::size_t D>
@@ -169,7 +156,6 @@ public:
         // Pack the binary char buffer
         std::stringstream buf{std::string{buffer, index_size}};
         for (std::size_t i = 0; i < hash_entries.size(); ++i) {
-            //            std::cout << "depth: " << hash_entries[i].local_depth << "seq: " << hash_entries[i].sequence << "ref: " << hash_entries[i].bucket_ref << std::endl;
             buf.write((char *) &(hash_entries[i]), sizeof(hash_entries[i]));
         }
         // Write buffer to disk
@@ -364,6 +350,7 @@ public:
 
     /*
      * Inserts a given key in the first bucket with available space in the overflow chain.
+     * Throws an exception if the key of the record to be inserted is already present and the index is for a primary key.
      * If none of the buckets in the overflow chain have available space, it creates a new bucket.
      * Accesses to disk: O(k + global_depth) where k is the number of buckets in an overflow chain,
      * and global_depth is the maximum depth of the index (number of bits in the binary sequences)
