@@ -40,14 +40,16 @@ int main() {
     };
 
     ExtendibleHashFile<int, Record, decltype(equal), decltype(index), decltype(hash), 3> extendibleHash{"data.dat", false, index, equal, hash};
-    Record new_record{};
-    readFromConsole(new_record.code, 5);
-    readFromConsole(new_record.name, 20);
-    std::cin >> new_record.cycle;
-    extendibleHash.insert(new_record);
-    //    auto result = extendibleHash.search(20);
-    //    for (auto &record : result) {
-    //        std::cout << record.to_string() << std::endl;
-    //    }
+//    Record new_record{};
+//    readFromConsole(new_record.code, 5);
+//    readFromConsole(new_record.name, 20);
+//    std::cin >> new_record.cycle;
+//    extendibleHash.insert(new_record);
+    extendibleHash.remove(80);
+    auto result = extendibleHash.search(80);
+    for (auto &record: result) {
+        std::cout << record.to_string() << std::endl;
+    }
+
     return 0;
 }

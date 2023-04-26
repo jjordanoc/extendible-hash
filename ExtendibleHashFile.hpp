@@ -102,6 +102,9 @@ struct ExtendibleHashEntry {
 
     ExtendibleHashEntry() = default;
 
+    /*
+     * Copy constructor.
+     */
     ExtendibleHashEntry(const ExtendibleHashEntry<D> &other) {
         local_depth = other.local_depth;
         std::memcpy(sequence, other.sequence, D + 1);
@@ -111,9 +114,13 @@ struct ExtendibleHashEntry {
 
 template<typename std::size_t D>
 class ExtendibleHash {
-    std::vector<ExtendibleHashEntry<D>> hash_entries;
+    std::vector<ExtendibleHashEntry<D>> hash_entries;// < Vector containing the entries of the hash
 
 public:
+    /*
+     * Constructs an empty hash with 2 buckets for sequences ending with 0 or 1.
+     * The position to the second bucket (bucket_1_ref) is required in order to initalize the second entry of the index.
+     */
     explicit ExtendibleHash(long bucket_1_ref) {
         // Initialize an empty index with two entries (the sequences 0...0 and 1...1) at local depth 1 with a reference to the first two buckets of the file
         ExtendibleHashEntry<D> entry_0{};
@@ -126,6 +133,12 @@ public:
         hash_entries.push_back(entry_0);
         hash_entries.push_back(entry_1);
     }
+
+    /*
+     * Constructs a hash from a non-empty index file.
+     * Reads the entire file to memory (should fit in RAM).
+     * Accesses to disk: O(1)
+     */
     explicit ExtendibleHash(std::fstream &index_file) {
         // Get the size of the index file
         SEEK_ALL_RELATIVE(index_file, 0, std::ios::end)
@@ -145,6 +158,11 @@ public:
         }
         delete[] buffer;
     }
+
+    /*
+     * Writes the entire index to disk (overwrites the actual contents of the file).
+     * Accesses to disk: O(1)
+     */
     void write_to_disk(std::fstream &index_file) {
         const std::size_t index_size = hash_entries.size() * sizeof(ExtendibleHashEntry<D>);
         char *buffer = new char[index_size];
@@ -157,8 +175,6 @@ public:
         // Write buffer to disk
         index_file.write(buf.str().c_str(), (long long) index_size);
         delete[] buffer;
-    }
-    void insert(const std::string &hash_sequence) {
     }
 
     /*
@@ -249,6 +265,9 @@ public:
      * Constructs the clustered index file.
      * It creates 2 files: The index file (.ehashind) and the clustered data file (.ehash).
      * Throws an exception if one of these files is empty.
+     * Accesses to disk:
+     * - If the clustered data file hasn't yet been created: O(n) where n is the total number of records in the data file
+     * - If the clustered data file has already been created: O(1)
      */
     explicit ExtendibleHashFile(const std::string &fileName, bool primaryKey, Index index, Equal equal, Hash hash) : raw_file_name(fileName), primary_key(primaryKey), index(index), equal(equal), hash_function(hash) {
         hash_file_name = raw_file_name + ".ehash";
@@ -305,6 +324,7 @@ public:
      * Returns a vector of elements that match the given key.
      * If the index was created for primary keys, it returns a single element.
      * If no element matches the given key, it returns an empty vector.
+     * Accesses to disk: O(k) where k is the length of the bucket chain accessed
      */
     std::vector<RecordType> search(KeyType key) {
         SAFE_FILE_OPEN(hash_file, hash_file_name, flags)
@@ -345,6 +365,8 @@ public:
     /*
      * Inserts a given key in the first bucket with available space in the overflow chain.
      * If none of the buckets in the overflow chain have available space, it creates a new bucket.
+     * Accesses to disk: O(k + global_depth) where k is the number of buckets in an overflow chain,
+     * and global_depth is the maximum depth of the index (number of bits in the binary sequences)
      */
     void insert(RecordType &record) {
         // If the attribute is a primary key, we must check whether a record with the given key already exists
@@ -437,6 +459,55 @@ public:
                         break;
                     }
                 }
+            }
+        }
+        hash_file.close();
+    }
+
+
+    /*
+     * Removes every record that matches the given key.
+     * Does nothing if the key does not exist.
+     * Swaps the element to be removed with the last element in the bucket and reduces its size.
+     * Accesses to disk: O(k) where k is the length of the bucket chain accessed
+     */
+    void remove(KeyType key) {
+        SAFE_FILE_OPEN(hash_file, hash_file_name, flags)
+        std::string hash_sequence = get_hash_sequence(key);
+        auto [entry_index, bucket_ref] = hash_index->lookup(hash_sequence);
+        // Read bucket at position bucket_ref
+        SEEK_ALL(hash_file, bucket_ref)
+        Bucket<RecordType> bucket{};
+        hash_file.read((char *) &bucket, sizeof(bucket));
+        // Search in chain of buckets
+        long current_bucket_ref = bucket_ref;
+        while (true) {
+            for (int i = 0; i < bucket.size; ++i) {
+                if (equal(key, index(bucket.records[i]))) {
+                    // Found record. Remove by swapping it with the last element.
+                    if (i < bucket.size - 1) {
+                        bucket.records[i] = bucket.records[bucket.size - 1];
+                    }
+                    bucket.size--;
+                    // If primary key, stop searching
+                    if (primary_key) {
+                        // Write current bucket to memory
+                        SEEK_ALL(hash_file, current_bucket_ref)
+                        hash_file.write((char *) &bucket, sizeof(bucket));
+                        return;
+                    }
+                }
+            }
+            // Write current bucket to memory
+            SEEK_ALL(hash_file, current_bucket_ref)
+            hash_file.write((char *) &bucket, sizeof(bucket));
+            // If there is a next bucket, explore it
+            if (bucket.next != -1) {
+                current_bucket_ref = bucket.next;
+                SEEK_ALL(hash_file, bucket.next)
+                hash_file.read((char *) &bucket, sizeof(bucket));
+            } else {
+                break;
             }
         }
         hash_file.close();
