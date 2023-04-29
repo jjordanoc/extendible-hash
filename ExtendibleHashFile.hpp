@@ -56,7 +56,7 @@
  * Definitions of constants related to Disk Space Management
  */
 
-#define BLOCK_SIZE 4096
+#define BLOCK_SIZE 1024
 
 /*
  * Each bucket should fit in RAM.
@@ -64,20 +64,20 @@
  * BLOCK_SIZE = sizeof(long) + (MAX_RECORDS_PER_BUCKET * sizeof(RecordType)) + sizeof(long)
  */
 
-template<typename RecordType>
-constexpr long MAX_RECORDS_PER_BUCKET = (BLOCK_SIZE - 2 * sizeof(long)) / sizeof(RecordType);
+template<typename KeyType>
+constexpr long MAX_RECORDS_PER_BUCKET = (BLOCK_SIZE - 2 * sizeof(long)) / sizeof(long);
 
-#define MAX_RECORDS_PER_BUCKET MAX_RECORDS_PER_BUCKET<RecordType>
+#define MAX_RECORDS_PER_BUCKET MAX_RECORDS_PER_BUCKET<KeyType>
 
 
 /*
  * Class/Struct definitions
  */
 
-template<typename RecordType>
+template<typename KeyType>
 struct Bucket {
     long size = 0;                             // < Stores the real amount of records the bucket holds
-    RecordType records[MAX_RECORDS_PER_BUCKET];// < Stores the data of the records themselves
+    std::pair<KeyType, long> records[MAX_RECORDS_PER_BUCKET];// < Stores the data of the records themselves
     long next = -1;                            // < Stores a reference to the next bucket in the chain (if it exists)
 };
 
@@ -270,8 +270,8 @@ public:
         if (index_file.peek() == std::ifstream::traits_type::eof() && hash_file.peek() == std::ifstream::traits_type::eof()) {//
             SAFE_FILE_OPEN(raw_file, raw_file_name, flags)
             // Data file is empty, just initialize an empty index and an empty hash file with two empty buckets
-            Bucket<RecordType> bucket_0{};
-            Bucket<RecordType> bucket_1{};
+            Bucket<KeyType> bucket_0{};
+            Bucket<KeyType> bucket_1{};
             hash_index = new ExtendibleHash<global_depth>{sizeof(bucket_0)};
             SEEK_ALL(hash_file, 0)
             PRINT_FLAGS(hash_file)
@@ -284,9 +284,10 @@ public:
                 // Construct hash file (.ehash)
                 RecordType record{};
                 while (!raw_file.eof()) {
+                    long record_ref = TELL(raw_file);
                     raw_file.read((char *) &record, sizeof(RecordType));
                     if (!raw_file.eof()) {
-                        insert(record);
+                        insert(record, record_ref);
                     }
                 }
             }
@@ -314,20 +315,24 @@ public:
      */
     std::vector<RecordType> search(KeyType key) {
         SAFE_FILE_OPEN(hash_file, hash_file_name, flags)
+        SAFE_FILE_OPEN(raw_file, raw_file_name, flags)
         std::vector<RecordType> result;
         std::string hash_sequence = get_hash_sequence(key);
         auto [entry_index, bucket_ref] = hash_index->lookup(hash_sequence);
         // Read bucket at position bucket_ref
         SEEK_ALL(hash_file, bucket_ref)
-        Bucket<RecordType> bucket{};
+        Bucket<KeyType> bucket{};
         hash_file.read((char *) &bucket, sizeof(bucket));
         // Search in chain of buckets
         bool stop = false;
         while (!stop) {
             for (int i = 0; i < bucket.size; ++i) {
-                if (equal(key, index(bucket.records[i]))) {
-                    // Found record. Add
-                    result.push_back(bucket.records[i]);
+                if (equal(key, bucket.records[i].first)) {
+                    // Found record. Add to result
+                    SEEK_ALL(raw_file, bucket.records[i].second)
+                    RecordType record{};
+                    raw_file.read((char *) &record, sizeof(record));
+                    result.push_back(record);
                     // If primary key, stop searching
                     if (primary_key) {
                         stop = true;
@@ -344,6 +349,7 @@ public:
             }
         }
         hash_file.close();
+        raw_file.close();
         return result;
     }
 
@@ -355,7 +361,7 @@ public:
      * Accesses to disk: O(k + global_depth) where k is the number of buckets in an overflow chain,
      * and global_depth is the maximum depth of the index (number of bits in the binary sequences)
      */
-    void insert(RecordType &record) {
+    void insert(RecordType &record, long record_ref) {
         // If the attribute is a primary key, we must check whether a record with the given key already exists
         if (primary_key) {
             if (!search(index(record)).empty()) throw std::runtime_error("Cannot insert a duplicate primary key.");
@@ -363,29 +369,28 @@ public:
         SAFE_FILE_OPEN(hash_file, hash_file_name, flags)
         std::string hash_sequence = get_hash_sequence(record);
         auto [entry_index, bucket_ref] = hash_index->lookup(hash_sequence);
-//        std::cout << bucket_ref << std::endl;
         // Insert record into bucket bucket_ref of the hash file
         SEEK_ALL(hash_file, bucket_ref)
         // Read and update bucket bucket_ref if it's not full
-        Bucket<RecordType> bucket{};
+        Bucket<KeyType> bucket{};
         hash_file.read((char *) &bucket, sizeof(bucket));
         if (bucket.size < MAX_RECORDS_PER_BUCKET) {
             // Append record
-            bucket.records[bucket.size++] = record;
+            bucket.records[bucket.size++] = std::make_pair(index(record), record_ref);
             // Write bucket bucket_ref
             SEEK_ALL(hash_file, bucket_ref)
             hash_file.write((char *) &bucket, sizeof(bucket));
         } else {
             // Create new buckets and split hash index if possible
-            Bucket<RecordType> bucket_0{};
-            Bucket<RecordType> bucket_1{};
+            Bucket<KeyType> bucket_0{};
+            Bucket<KeyType> bucket_1{};
             SEEK_ALL_RELATIVE(hash_file, 0, std::ios::end)
             // Split the current hash entry and save a pointer to the end of the file (new bucket position)
             auto [could_split, local_depth] = hash_index->split_entry(entry_index, TELL(hash_file));
             // Split was successful, rehash the current content of the bucket into the two new buckets
             if (could_split) {
                 for (int i = 0; i < bucket.size; ++i) {
-                    std::string ith_hash_seq = get_hash_sequence(bucket.records[i]);
+                    std::string ith_hash_seq = get_hash_sequence(bucket.records[i].first);
                     if (ith_hash_seq[global_depth - 1 - local_depth] == '0') {
                         bucket_0.records[bucket_0.size++] = bucket.records[i];
                     } else {
@@ -395,9 +400,9 @@ public:
                 if (bucket_0.size != MAX_RECORDS_PER_BUCKET && bucket_1.size != MAX_RECORDS_PER_BUCKET) {
                     // Insert the new record
                     if (hash_sequence[global_depth - 1 - local_depth] == '0') {
-                        bucket_0.records[bucket_0.size++] = record;
+                        bucket_0.records[bucket_0.size++] = std::make_pair(index(record), record_ref);
                     } else {
-                        bucket_1.records[bucket_1.size++] = record;
+                        bucket_1.records[bucket_1.size++] = std::make_pair(index(record), record_ref);
                     }
                     // Write the two new buckets to secondary storage
                     SEEK_ALL(hash_file, bucket_ref)
@@ -412,7 +417,7 @@ public:
                     hash_file.write((char *) &bucket_1, sizeof(bucket_1));
                     // Insert new record recursively (could not insert it in the current split)
                     hash_file.close();
-                    insert(record);
+                    insert(record, record_ref);
                     return;
                 }
 
@@ -429,7 +434,7 @@ public:
                         // If the next overflow bucket is not full, insert to it
                         if (bucket.size < MAX_RECORDS_PER_BUCKET) {
                             SEEK_ALL(hash_file, parent_bucket_ref)
-                            bucket.records[bucket.size++] = record;
+                            bucket.records[bucket.size++] = std::make_pair(index(record), record_ref);
                             hash_file.write((char *) &bucket, sizeof(bucket));
                             break;
                         }
@@ -438,7 +443,7 @@ public:
                     else {
                         // Create new bucket
                         SEEK_ALL_RELATIVE(hash_file, 0, std::ios::end)
-                        bucket_0.records[bucket_0.size++] = record;
+                        bucket_0.records[bucket_0.size++] = std::make_pair(index(record), record_ref);
                         long new_bucket_ref = TELL(hash_file);
                         hash_file.write((char *) &bucket_0, sizeof(bucket_0));
                         // Update parent reference
@@ -466,13 +471,13 @@ public:
         auto [entry_index, bucket_ref] = hash_index->lookup(hash_sequence);
         // Read bucket at position bucket_ref
         SEEK_ALL(hash_file, bucket_ref)
-        Bucket<RecordType> bucket{};
+        Bucket<KeyType> bucket{};
         hash_file.read((char *) &bucket, sizeof(bucket));
         // Search in chain of buckets
         long current_bucket_ref = bucket_ref;
         while (true) {
             for (int i = 0; i < bucket.size; ++i) {
-                if (equal(key, index(bucket.records[i]))) {
+                if (equal(key, bucket.records[i].first)) {
                     // Found record. Remove by swapping it with the last element.
                     if (i < bucket.size - 1) {
                         bucket.records[i] = bucket.records[bucket.size - 1];

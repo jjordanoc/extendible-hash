@@ -43,6 +43,7 @@ int main() {
     };
 
     ExtendibleHashFile<int, MovieRecord, decltype(equal), decltype(index), decltype(hash), 16> extendibleHash{"movies_and_series.dat", false, index, equal, hash};
+    extendibleHash.remove(1874);
     long total = 0;
     for (short i = 1874; i <= 2023; ++i) {
         auto result = extendibleHash.search(i);
@@ -51,6 +52,7 @@ int main() {
         }
     }
     total += extendibleHash.search(-1).size();
+
     std::cout << "Total: " << total << std::endl;
     return 0;
 }
