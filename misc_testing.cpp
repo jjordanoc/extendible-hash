@@ -1,7 +1,17 @@
-#include <bitset>
-#include <fstream>
+#include <functional>
 #include <iostream>
 #include <sstream>
+
+#include "ExtendibleHashFile.hpp"
+
+void readFromConsole(char buffer[], int size) {
+    std::string temp;
+    std::cin >> temp;
+    for (int i = 0; i < size; i++)
+        buffer[i] = (i < temp.size()) ? temp[i] : '\0';
+    buffer[size - 1] = '\0';
+    std::cin.clear();
+}
 
 struct Record {
     char code[5];
@@ -15,90 +25,64 @@ struct Record {
     }
 };
 
-std::ostream &operator<<(std::ostream &stream, Record &p) {
-    stream.write((char *) &p, sizeof(Record));
-    stream << std::flush;
-    return stream;
+void test_int_index() {
+    std::function<bool(int, int)> equal = [](int a, int b) {
+        return a == b;
+    };
+
+    std::function<int(Record &)> index = [=](Record &record) {
+        return record.cycle;
+    };
+    std::hash<int> hasher;
+    std::function<std::size_t(int)> hash = [&hasher](int key) {
+        return hasher(key);
+    };
+
+    ExtendibleHashFile<int, Record, decltype(equal), decltype(index), decltype(hash), 3> extendibleHash{"data.dat", false, index, equal, hash};
+    //    Record new_record{};
+    //    readFromConsole(new_record.code, 5);
+    //    readFromConsole(new_record.name, 20);
+    //    std::cin >> new_record.cycle;
+    //    extendibleHash.insert(new_record);
+    //    extendibleHash.remove(80);
+    auto result = extendibleHash.search(9012);
+    for (auto &record: result) {
+        std::cout << record.to_string() << std::endl;
+    }
 }
 
-std::ifstream &operator>>(std::ifstream &stream, Record &p) {
-    stream.read((char *) &p, sizeof(p));
-    return stream;
-}
+void test_index_char() {
+    std::function<bool(char *, char *)> equal = [](char *a, char *b) {
+        return std::string(a) == std::string(b);
+    };
 
+    std::function<char *(Record &)> index = [=](Record &record) {
+        return record.code;
+    };
+    std::hash<std::string> hasher;
+    std::function<std::size_t(char *)> hash = [&hasher](char *key) {
+        return hasher(key);
+    };
 
-void readFromConsole(char buffer[], int size) {
-    std::string temp;
-    std::cin >> temp;
-    for (int i = 0; i < size; i++)
-        buffer[i] = (i < temp.size()) ? temp[i] : ' ';
-    buffer[size - 1] = '\0';
-    std::cin.clear();
-}
-
-template<typename std::size_t D>
-struct ExtendibleHashEntry {
-    std::size_t local_depth = 1;// < Stores the local depth of the bucket
-    char sequence[D + 1];       // < Stores the binary hash sequence
-    long bucket_ref;            // < Stores a reference to a page in disk
-
-    std::string to_string() {
-        std::stringstream ss;
-        ss << "(" << local_depth << ", " << sequence << ", " << bucket_ref << ")";
-        return ss.str();
+    ExtendibleHashFile<char *, Record, decltype(equal), decltype(index), decltype(hash), 3> extendibleHash{"data.dat", false, index, equal, hash};
+    //    Record new_record{};
+    //    readFromConsole(new_record.code, 5);
+    //    readFromConsole(new_record.name, 20);
+    //    std::cin >> new_record.cycle;
+    //    extendibleHash.insert(new_record);
+    //    extendibleHash.remove(80);
+    auto result = extendibleHash.search("1000");
+    for (auto &record: result) {
+        std::cout << record.to_string() << std::endl;
     }
-};
-
-void create_file() {
-    std::ofstream file("data.dat", std::ios::binary);
-    int n;
-    std::cin >> n;
-    for (int i = 0; i < n; ++i) {
-        Record newRecord{};
-        readFromConsole(newRecord.code, 5);
-        readFromConsole(newRecord.name, 20);
-        std::cin >> newRecord.cycle;
-        file << newRecord;
-    }
-    file.close();
-    std::ifstream infile("data.dat", std::ios::binary);
-    while (!infile.eof()) {
-        Record tmp{};
-        infile >> tmp;
-        if (!infile.eof()) {
-            std::cout << tmp.to_string() << std::endl;
-        }
-    }
-    infile.close();
-}
-
-void create_index_file() {
-    std::ofstream file("data.dat_index.dat", std::ios::binary);
-    int n;
-    std::cin >> n;
-    for (int i = 0; i < n; ++i) {
-        ExtendibleHashEntry<3> newEntry{};
-        readFromConsole(newEntry.sequence, 4);
-        std::cin >> newEntry.bucket_ref;
-        file.write((char *) &newEntry, sizeof(ExtendibleHashEntry<3>));
-    }
-    file.close();
-    std::ifstream infile("data.dat_index.dat", std::ios::binary);
-    while (!infile.eof()) {
-        ExtendibleHashEntry<3> tmp{};
-        infile.read((char *) &tmp, sizeof(ExtendibleHashEntry<3>));
-        if (!infile.eof()) {
-            std::cout << tmp.to_string() << std::endl;
-        }
-    }
-    infile.close();
 }
 
 int main() {
-//    create_file();
-    std::hash<int> hsh{};
-    constexpr std::size_t global_depth = 3;
-//    char name[20];
-//    readFromConsole(name, 20);
-    std::cout << std::bitset<global_depth>{hsh(21) % (1 << global_depth)}.to_string() << std::endl;
+
+    // Note: Once the index has been created with a given hash function,
+    // it can only be accessed using the same hash function, because that's
+    // the way that buckets are created to begin with.
+    test_int_index();
+
+    return 0;
 }

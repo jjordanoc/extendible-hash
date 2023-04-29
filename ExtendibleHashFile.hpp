@@ -56,7 +56,7 @@
  * Definitions of constants related to Disk Space Management
  */
 
-#define BLOCK_SIZE 256
+#define BLOCK_SIZE 4096
 
 /*
  * Each bucket should fit in RAM.
@@ -363,7 +363,7 @@ public:
         SAFE_FILE_OPEN(hash_file, hash_file_name, flags)
         std::string hash_sequence = get_hash_sequence(record);
         auto [entry_index, bucket_ref] = hash_index->lookup(hash_sequence);
-        std::cout << bucket_ref << std::endl;
+//        std::cout << bucket_ref << std::endl;
         // Insert record into bucket bucket_ref of the hash file
         SEEK_ALL(hash_file, bucket_ref)
         // Read and update bucket bucket_ref if it's not full
@@ -411,7 +411,9 @@ public:
                     SEEK_ALL_RELATIVE(hash_file, 0, std::ios::end)
                     hash_file.write((char *) &bucket_1, sizeof(bucket_1));
                     // Insert new record recursively (could not insert it in the current split)
+                    hash_file.close();
                     insert(record);
+                    return;
                 }
 
             }
