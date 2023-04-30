@@ -216,7 +216,7 @@ template<typename KeyType,
          typename Equal,
          typename Index,
          typename Hash,
-         std::size_t global_depth = 32>// < Maximum depth of the binary index key (defaults to 32, like in most systems)
+         std::size_t global_depth = 16>// < Maximum depth of the binary index key (defaults to 16)
 class ExtendibleHashFile {
     std::fstream raw_file;                                                                //< File object used to manage acces to the raw data file (not used if index is already created)
     std::string raw_file_name;                                                            //< Raw data file name
@@ -248,16 +248,16 @@ class ExtendibleHashFile {
 
 public:
     /*
-     * Constructs the clustered index file.
-     * It creates 2 files: The index file (.ehashind) and the clustered data file (.ehash).
+     * Constructs the hash index file.
+     * It creates 2 files: The directory file (.ehashdir) and the hash index (.ehash).
      * Throws an exception if one of these files is empty.
      * Accesses to disk:
-     * - If the clustered data file hasn't yet been created: O(n) where n is the total number of records in the data file
-     * - If the clustered data file has already been created: O(1)
+     * - If the index file hasn't yet been created: O(n) where n is the total number of records in the data file
+     * - If the index file has already been created: O(1)
      */
     explicit ExtendibleHashFile(const std::string &fileName, bool primaryKey, Index index, Equal equal, Hash hash) : raw_file_name(fileName), primary_key(primaryKey), index(index), equal(equal), hash_function(hash) {
         hash_file_name = raw_file_name + ".ehash";
-        index_file_name = raw_file_name + ".ehashind";
+        index_file_name = raw_file_name + ".ehashdir";
         // Create needed files if they don't exist
         SAFE_FILE_CREATE_IF_NOT_EXISTS(hash_file, hash_file_name)
         SAFE_FILE_CREATE_IF_NOT_EXISTS(index_file, index_file_name)
@@ -274,10 +274,8 @@ public:
             Bucket<KeyType> bucket_1{};
             hash_index = new ExtendibleHash<global_depth>{sizeof(bucket_0)};
             SEEK_ALL(hash_file, 0)
-            PRINT_FLAGS(hash_file)
             hash_file.write((char *) &bucket_0, sizeof(bucket_0));
             hash_file.write((char *) &bucket_1, sizeof(bucket_1));
-            PRINT_FLAGS(hash_file)
             hash_file.close();
             // Data file is not empty, construct the index accordingly (insert the entries)
             if (raw_file.peek() != std::ifstream::traits_type::eof()) {
@@ -467,6 +465,7 @@ public:
      */
     void remove(KeyType key) {
         SAFE_FILE_OPEN(hash_file, hash_file_name, flags)
+        SAFE_FILE_OPEN(raw_file, raw_file_name, flags)
         std::string hash_sequence = get_hash_sequence(key);
         auto [entry_index, bucket_ref] = hash_index->lookup(hash_sequence);
         // Read bucket at position bucket_ref
@@ -478,6 +477,14 @@ public:
         while (true) {
             for (int i = 0; i < bucket.size; ++i) {
                 if (equal(key, bucket.records[i].first)) {
+                    // Mark record as deleted in the data file.
+                    long record_ref = bucket.records[i].second;
+                    SEEK_ALL(raw_file, record_ref)
+                    RecordType record{};
+                    raw_file.read((char *) &record, sizeof(record));
+                    record.removed = true;
+                    SEEK_ALL(raw_file, record_ref)
+                    raw_file.write((char *) &record, sizeof(record));
                     // Found record. Remove by swapping it with the last element.
                     if (i < bucket.size - 1) {
                         bucket.records[i] = bucket.records[bucket.size - 1];
@@ -488,6 +495,8 @@ public:
                         // Write current bucket to memory
                         SEEK_ALL(hash_file, current_bucket_ref)
                         hash_file.write((char *) &bucket, sizeof(bucket));
+                        raw_file.close();
+                        hash_file.close();
                         return;
                     }
                 }
@@ -505,6 +514,7 @@ public:
             }
         }
         hash_file.close();
+        raw_file.close();
     }
 
     virtual ~ExtendibleHashFile() {

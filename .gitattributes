@@ -1,3 +1,4 @@
 *.dat filter=lfs diff=lfs merge=lfs -text
 *.ehash filter=lfs diff=lfs merge=lfs -text
 *.ehashind filter=lfs diff=lfs merge=lfs -text
+*ehashdir filter=lfs diff=lfs merge=lfs -text
