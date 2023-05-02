@@ -110,17 +110,18 @@ namespace func {
  */
 
 template<typename KeyType>
-struct BucketPair {
+struct BucketEntry {
     KeyType key{};      // < Key that's being indexed
     long record_ref = 0;// < Physical position of the record in the raw data file
+    std::size_t hash_sequence = 0;
 
-    BucketPair() = default;
+    BucketEntry() = default;
 
     /*
      * Constructor.
      * Ensures that a KeyType of char* is properly copied.
      */
-    BucketPair(KeyType _key, long _record_ref) : record_ref(_record_ref) {
+    BucketEntry(KeyType _key, long _record_ref, std::size_t _hash_sequence) : record_ref(_record_ref), hash_sequence(_hash_sequence) {
         func::copy(key, _key);
     }
 
@@ -128,9 +129,10 @@ struct BucketPair {
      * Copy constructor.
      * Ensures that a KeyType of char* is properly copied.
      */
-    BucketPair &operator=(const BucketPair &bucket_pair) {
-        func::copy(key, bucket_pair.key);
-        record_ref = bucket_pair.record_ref;
+    BucketEntry &operator=(const BucketEntry &other) {
+        func::copy(key, other.key);
+        record_ref = other.record_ref;
+        hash_sequence = other.hash_sequence;
         return *this;
     }
 };
@@ -138,25 +140,31 @@ struct BucketPair {
 template<typename KeyType>
 struct Bucket {
     long size = 0;                                      // < Stores the real amount of records the bucket holds
-    BucketPair<KeyType> records[MAX_RECORDS_PER_BUCKET];// < Stores the data of the records themselves
+    BucketEntry<KeyType> records[MAX_RECORDS_PER_BUCKET];// < Stores the data of the records themselves
     long next = -1;                                     // < Stores a reference to the next bucket in the chain (if it exists)
 };
 
 template<typename std::size_t D>
 struct ExtendibleHashEntry {
     std::size_t local_depth = 1;// < Stores the local depth of the bucket
-    char sequence[D + 1] = {};  // < Stores the binary hash sequence
+    std::size_t sequence=  0;  // < Stores the binary hash sequence
     long bucket_ref = 0;        // < Stores a reference to a page in disk
 
     ExtendibleHashEntry() = default;
 
-    /*
-     * Copy constructor.
-     */
-    ExtendibleHashEntry(const ExtendibleHashEntry<D> &other) {
-        local_depth = other.local_depth;
-        std::memcpy(sequence, other.sequence, D + 1);
-        bucket_ref = other.bucket_ref;
+    void expand_sequence() {
+        sequence = (1 << local_depth) | sequence;
+    }
+
+    static bool compare_sequences(std::size_t seq1, std::size_t seq2, const std::size_t &local_depth) {
+        for (std::size_t i = 0; i < local_depth; ++i) {
+            if ((seq1 & 1) != (seq2 & 1)) {
+                return false;
+            }
+            seq1 >>= 1;
+            seq2 >>= 1;
+        }
+        return true;
     }
 };
 
@@ -172,11 +180,9 @@ public:
     explicit ExtendibleHash(long bucket_1_ref) {
         // Initialize an empty index with two entries (the sequences 0...0 and 1...1) at local depth 1 with a reference to the first two buckets of the file
         ExtendibleHashEntry<D> entry_0{};
-        std::string empty_sequence_0 = std::bitset<D>(0).to_string();
-        std::strcpy(entry_0.sequence, empty_sequence_0.c_str());
+        entry_0.sequence = 0b0;
         ExtendibleHashEntry<D> entry_1{};
-        std::string empty_sequence_1 = std::bitset<D>(1).to_string();
-        std::strcpy(entry_1.sequence, empty_sequence_1.c_str());
+        entry_1.sequence = 0b1;
         entry_1.bucket_ref = bucket_1_ref;
         hash_entries.push_back(entry_0);
         hash_entries.push_back(entry_1);
@@ -228,22 +234,13 @@ public:
      * Looks for an entry.
      * Returns a pair containing the position of the entry (first), and the bucket it references (second)
      */
-    std::pair<std::size_t, long> lookup(const std::string &hash_sequence) {
-        for (std::size_t i = 0; i < hash_entries.size(); ++i) {
-            auto local_depth = hash_entries[i].local_depth;
-            bool eq = true;
-            for (int j = 0; j < local_depth; ++j) {
-                // If the sequences are different given the local depth, this is not the bucket we're looking for
-                if (hash_sequence[D - 1 - j] != hash_entries[i].sequence[D - 1 - j]) {
-                    eq = false;
-                    break;
-                }
-            }
-            if (eq) {
-                return std::make_pair(i, hash_entries[i].bucket_ref);
-            }
-        }
-        throw std::runtime_error("Could not find given hash sequence on ExtendibleHash.");
+    std::pair<std::size_t, long> lookup(const std::size_t &hash_sequence) {
+//        for (std::size_t i = 0; i < hash_entries.size(); ++i) {
+//            if (ExtendibleHashEntry<D>::compare_sequences(hash_sequence, hash_entries[i].sequence, hash_entries[i].local_depth)) {
+//                return std::make_pair(i, hash_entries[i].bucket_ref);
+//            }
+//        }
+        return std::make_pair(hash_sequence, hash_entries[hash_sequence].bucket_ref);
     }
 
     /*
@@ -256,7 +253,7 @@ public:
             // Create a copy of the actual entry
             ExtendibleHashEntry<D> entry_1{hash_entries[entry_index]};
             // Update the sequence to have a 1 at the local_depth position (from right to left)
-            entry_1.sequence[D - 1 - local_depth] = '1';
+            entry_1.expand_sequence();
             // Reference the new bucket's position
             entry_1.bucket_ref = new_bucket_ref;
             // Increase the local depth
@@ -300,15 +297,6 @@ class ExtendibleHashFile {
 
 
     /*
-     * Returns a binary sequence of the hash key.
-     */
-    std::string get_hash_sequence(KeyType key) {
-        auto hash_key = hash_function(key);
-        auto bit_set = std::bitset<global_depth>{hash_key % (1 << global_depth)};
-        return bit_set.to_string();
-    }
-
-    /*
      * Writes the entire directory file to secondary storage.
      * Accesses to disk: O(1)
      */
@@ -327,7 +315,7 @@ class ExtendibleHashFile {
      */
     bool find_if_exists(KeyType key) {
         SAFE_FILE_OPEN(hash_file, hash_file_name, flags)
-        std::string hash_sequence = get_hash_sequence(key);
+        std::size_t hash_sequence = get_hash_sequence(key);
         auto [entry_index, bucket_ref] = hash_index->lookup(hash_sequence);
         // Read bucket at position bucket_ref
         SEEK_ALL(hash_file, bucket_ref)
@@ -350,6 +338,22 @@ class ExtendibleHashFile {
         }
         hash_file.close();
         return false;
+    }
+
+    std::size_t get_hash_sequence(KeyType key) {
+        return hash_function(key) % (1 << global_depth);
+    }
+
+    std::size_t make_address(KeyType key, std::size_t depth) {
+        std::size_t result = 0;
+        std::size_t hash_sequence = get_hash_sequence(key);
+        for (int i = 0; i < depth; ++i) {
+            result <<= 1;
+            int lowbit = hash_sequence & 1;
+            result |= lowbit;
+            hash_sequence >>= 1;
+        }
+        return result;
     }
 
 
@@ -431,7 +435,7 @@ public:
         SAFE_FILE_OPEN(hash_file, hash_file_name, flags)
         SAFE_FILE_OPEN(raw_file, raw_file_name, flags)
         std::vector<RecordType> result;
-        std::string hash_sequence = get_hash_sequence(key);
+        std::size_t hash_sequence = get_hash_sequence(key);
         auto [entry_index, bucket_ref] = hash_index->lookup(hash_sequence);
         // Read bucket at position bucket_ref
         SEEK_ALL(hash_file, bucket_ref)
@@ -481,7 +485,7 @@ public:
             throw std::runtime_error("Cannot insert a duplicate primary key.");
         }
         SAFE_FILE_OPEN(hash_file, hash_file_name, flags)
-        std::string hash_sequence = get_hash_sequence(index(record));
+        std::size_t hash_sequence = get_hash_sequence(index(record));
         auto [entry_index, bucket_ref] = hash_index->lookup(hash_sequence);
         // Insert record into bucket bucket_ref of the hash file
         SEEK_ALL(hash_file, bucket_ref)
@@ -490,7 +494,7 @@ public:
         hash_file.read((char *) &bucket, sizeof(bucket));
         if (bucket.size < MAX_RECORDS_PER_BUCKET) {
             // Append record
-            bucket.records[bucket.size++] = BucketPair<KeyType>{index(record), record_ref};
+            bucket.records[bucket.size++] = BucketEntry<KeyType>{index(record), record_ref, hash_sequence};
             // Write bucket bucket_ref
             SEEK_ALL(hash_file, bucket_ref)
             hash_file.write((char *) &bucket, sizeof(bucket));
@@ -505,19 +509,19 @@ public:
             if (could_split) {
                 write_directory();
                 for (int i = 0; i < bucket.size; ++i) {
-                    std::string ith_hash_seq = get_hash_sequence(bucket.records[i].key);
-                    if (ith_hash_seq[global_depth - 1 - local_depth] == '0') {
-                        bucket_0.records[bucket_0.size++] = bucket.records[i];
-                    } else {
+                    std::size_t ith_hash_seq = bucket.records[i].hash_sequence;
+                    if ((ith_hash_seq >> (local_depth)) & 1) {
                         bucket_1.records[bucket_1.size++] = bucket.records[i];
+                    } else {
+                        bucket_0.records[bucket_0.size++] = bucket.records[i];
                     }
                 }
                 if (bucket_0.size != MAX_RECORDS_PER_BUCKET && bucket_1.size != MAX_RECORDS_PER_BUCKET) {
                     // Insert the new record
-                    if (hash_sequence[global_depth - 1 - local_depth] == '0') {
-                        bucket_0.records[bucket_0.size++] = BucketPair<KeyType>{index(record), record_ref};
+                    if ((hash_sequence >> (local_depth)) & 1) {
+                        bucket_1.records[bucket_1.size++] = BucketEntry<KeyType>{index(record), record_ref, hash_sequence};
                     } else {
-                        bucket_1.records[bucket_1.size++] = BucketPair<KeyType>{index(record), record_ref};
+                        bucket_0.records[bucket_0.size++] = BucketEntry<KeyType>{index(record), record_ref, hash_sequence};
                     }
                     // Write the two new buckets to secondary storage
                     SEEK_ALL(hash_file, bucket_ref)
@@ -549,7 +553,7 @@ public:
                         // If the next overflow bucket is not full, insert to it
                         if (bucket.size < MAX_RECORDS_PER_BUCKET) {
                             SEEK_ALL(hash_file, parent_bucket_ref)
-                            bucket.records[bucket.size++] = BucketPair<KeyType>{index(record), record_ref};
+                            bucket.records[bucket.size++] = BucketEntry<KeyType>{index(record), record_ref, hash_sequence};
                             hash_file.write((char *) &bucket, sizeof(bucket));
                             break;
                         }
@@ -558,7 +562,7 @@ public:
                     else {
                         // Create new bucket
                         SEEK_ALL_RELATIVE(hash_file, 0, std::ios::end)
-                        bucket_0.records[bucket_0.size++] = BucketPair<KeyType>{index(record), record_ref};
+                        bucket_0.records[bucket_0.size++] = BucketEntry<KeyType>{index(record), record_ref, hash_sequence};
                         long new_bucket_ref = TELL(hash_file);
                         hash_file.write((char *) &bucket_0, sizeof(bucket_0));
                         // Update parent reference
@@ -583,7 +587,7 @@ public:
     void remove(KeyType key) {
         SAFE_FILE_OPEN(hash_file, hash_file_name, flags)
         SAFE_FILE_OPEN(raw_file, raw_file_name, flags)
-        std::string hash_sequence = get_hash_sequence(key);
+        std::size_t hash_sequence = get_hash_sequence(key);
         auto [entry_index, bucket_ref] = hash_index->lookup(hash_sequence);
         // Read bucket at position bucket_ref
         SEEK_ALL(hash_file, bucket_ref)
