@@ -274,10 +274,11 @@ public:
 
 template<typename KeyType,
          typename RecordType,
-         typename Equal,
-         typename Index,
-         typename Hash,
-         std::size_t global_depth = 16>// < Maximum depth of the binary index key (defaults to 16)
+         std::size_t global_depth = 16,                        // < Maximum depth of the binary index key (defaults to 16)
+         typename Index = std::function<KeyType(RecordType &)>,// < Indexing function type
+         typename Equal = std::equal_to<KeyType>,              // < Equal comparator type
+         typename Hash = std::hash<KeyType>                    // < Hash type
+         >
 class ExtendibleHashFile {
     std::fstream raw_file;                                                                //< File object used to manage acces to the raw data file (not used if index is already created)
     std::string raw_file_name;                                                            //< Raw data file name
@@ -315,7 +316,6 @@ class ExtendibleHashFile {
         // Write hash_index to disk
         SAFE_FILE_OPEN(index_file, index_file_name, flags | std::ios::trunc)
         hash_index->write_to_disk(index_file);
-        delete hash_index;
         index_file.close();
     }
 
@@ -352,7 +352,34 @@ class ExtendibleHashFile {
         return false;
     }
 
+
 public:
+    explicit ExtendibleHashFile(const std::string &fileName, const std::string &uniqueId, bool primaryKey, Index index, Equal equal = std::equal_to<KeyType>{}, Hash hash = std::hash<KeyType>{}) : raw_file_name(fileName), primary_key(primaryKey), unique_id(uniqueId), index(index), equal(equal), hash_function(hash) {
+        hash_file_name = raw_file_name + "_" + unique_id + ".ehash";
+        index_file_name = raw_file_name + "_" + unique_id + ".ehashdir";
+        SAFE_FILE_CREATE_IF_NOT_EXISTS(index_file, index_file_name)
+        SAFE_FILE_OPEN(index_file, index_file_name, flags)
+        if (index_file.peek() != std::ifstream::traits_type::eof()) {
+            hash_index = new ExtendibleHash<global_depth>{index_file};
+        }
+        index_file.close();
+    }
+
+
+    /*
+     * Returns a bool that indicates whether the index has already been created.
+     */
+    explicit operator bool() {
+        SAFE_FILE_OPEN(index_file, index_file_name, flags)
+        bool is_created = false;
+        if (index_file.peek() != std::ifstream::traits_type::eof()) {
+            is_created = true;
+        }
+        index_file.close();
+        return is_created;
+    }
+
+
     /*
      * Constructs the hash index file.
      * It creates 2 files: The directory file (.ehashdir) and the hash index (.ehash).
@@ -361,51 +388,34 @@ public:
      * - If the index file hasn't yet been created: O(n) where n is the total number of records in the data file
      * - If the index file has already been created: O(1)
      */
-    explicit ExtendibleHashFile(const std::string &fileName, const std::string &uniqueId, bool primaryKey, Index index, Equal equal, Hash hash) : raw_file_name(fileName), primary_key(primaryKey), unique_id(uniqueId), index(index), equal(equal), hash_function(hash) {
-        hash_file_name = raw_file_name + "_" + unique_id + ".ehash";
-        index_file_name = raw_file_name + "_" + unique_id + ".ehashdir";
+    void create_index() {
         // Create needed files if they don't exist
         SAFE_FILE_CREATE_IF_NOT_EXISTS(hash_file, hash_file_name)
         SAFE_FILE_CREATE_IF_NOT_EXISTS(index_file, index_file_name)
         // Load or create index file
         SAFE_FILE_OPEN(index_file, index_file_name, flags)
         SAFE_FILE_OPEN(hash_file, hash_file_name, flags)
+        SAFE_FILE_OPEN(raw_file, raw_file_name, flags)
         SEEK_ALL(index_file, 0)
         SEEK_ALL(hash_file, 0)
-        // If the index file is empty, initialize the index
-        if (index_file.peek() == std::ifstream::traits_type::eof() && hash_file.peek() == std::ifstream::traits_type::eof()) {//
-            SAFE_FILE_OPEN(raw_file, raw_file_name, flags)
-            // Data file is empty, just initialize an empty index and an empty hash file with two empty buckets
-            Bucket<KeyType> bucket_0{};
-            Bucket<KeyType> bucket_1{};
-            hash_index = new ExtendibleHash<global_depth>{sizeof(bucket_0)};
-            SEEK_ALL(hash_file, 0)
-            hash_file.write((char *) &bucket_0, sizeof(bucket_0));
-            hash_file.write((char *) &bucket_1, sizeof(bucket_1));
-            hash_file.close();
-            // Data file is not empty, construct the index accordingly (insert the entries)
-            if (raw_file.peek() != std::ifstream::traits_type::eof()) {
-                // Construct hash file (.ehash)
-                RecordType record{};
-                while (!raw_file.eof()) {
-                    long record_ref = TELL(raw_file);
-                    raw_file.read((char *) &record, sizeof(record));
-                    if (!raw_file.eof()) {
-                        insert(record, record_ref);
-                    }
-                }
+        SEEK_ALL(raw_file, 0)
+        // Data file is empty, just initialize an empty index and an empty hash file with two empty buckets
+        Bucket<KeyType> bucket_0{};
+        Bucket<KeyType> bucket_1{};
+        hash_index = new ExtendibleHash<global_depth>{sizeof(bucket_0)};
+        hash_file.write((char *) &bucket_0, sizeof(bucket_0));
+        hash_file.write((char *) &bucket_1, sizeof(bucket_1));
+        hash_file.close();
+        // Construct hash file (.ehash)
+        RecordType record{};
+        while (!raw_file.eof()) {
+            long record_ref = TELL(raw_file);
+            raw_file.read((char *) &record, sizeof(record));
+            if (!raw_file.eof()) {
+                insert(record, record_ref);
             }
-            raw_file.close();
-        } else if ((index_file.peek() != std::ifstream::traits_type::eof() && hash_file.peek() == std::ifstream::traits_type::eof()) || (index_file.peek() == std::ifstream::traits_type::eof() && hash_file.peek() != std::ifstream::traits_type::eof())) {
-            hash_file.close();
-            index_file.close();
-            throw std::runtime_error("Corrupt ExtendibleHashFile file structure.");
         }
-        // The index file is not empty, read its contents
-        else {
-            hash_file.close();
-            hash_index = new ExtendibleHash<global_depth>{index_file};
-        }
+        raw_file.close();
         index_file.close();
     }
 
@@ -493,6 +503,7 @@ public:
             auto [could_split, local_depth] = hash_index->split_entry(entry_index, TELL(hash_file));
             // Split was successful, rehash the current content of the bucket into the two new buckets
             if (could_split) {
+                write_directory();
                 for (int i = 0; i < bucket.size; ++i) {
                     std::string ith_hash_seq = get_hash_sequence(bucket.records[i].key);
                     if (ith_hash_seq[global_depth - 1 - local_depth] == '0') {
@@ -625,6 +636,7 @@ public:
 
     virtual ~ExtendibleHashFile() {
         write_directory();
+        delete hash_index;
     }
 };
 
