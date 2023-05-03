@@ -60,6 +60,11 @@ int main() {
                 auto result = extendible_hash_release_year.search(i);
                 if (!result.empty()) {
                     total += result.size();
+//                    if (i == 2014) {
+//                        for (auto &record : result) {
+//                            std::cout << record.to_string() << std::endl;
+//                        }
+//                    }
                 }
             }
             total += extendible_hash_release_year.search(-1).size();
@@ -104,7 +109,7 @@ int main() {
             }
         };
         auto search_data_id = [&]() {
-            extendible_hash_data_id.remove(102795);
+//            extendible_hash_data_id.remove(102795);
             auto res = extendible_hash_data_id.search(102795);
             for (auto &record: res) {
                 std::cout << record.to_string() << std::endl;

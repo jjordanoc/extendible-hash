@@ -473,7 +473,9 @@ public:
             long record_ref = TELL(raw_file);
             raw_file.read((char *) &record, sizeof(record));
             if (!raw_file.eof()) {
-                _insert(record, record_ref);
+                if (!record.removed) {
+                    _insert(record, record_ref);
+                }
             }
         }
         hash_index->write_to_disk(index_file);
@@ -551,10 +553,9 @@ public:
 
 
     /*
-     * Removes every record that matches the given key.
+     * Removes every record that matches the given key by marking it as removed on the data file.
      * Does nothing if the key does not exist.
-     * Swaps the element to be removed with the last element in the bucket and reduces its size.
-     * Accesses to disk: O(k) where k is the length of the bucket chain accessed
+     * Accesses to disk: O(k) where k is the length of the bucket chain accessed.
      */
     void remove(KeyType key) {
         SAFE_FILE_OPEN(hash_file, hash_file_name, flags)
@@ -568,7 +569,7 @@ public:
         // Search in chain of buckets
         long current_bucket_ref = bucket_ref;
         while (true) {
-            for (int i = 0; i < bucket.size; ++i) {
+            for (int i = bucket.size - 1; i >= 0; --i) {
                 if (equal(key, bucket.records[i].key)) {
                     // Mark record as deleted in the data file.
                     long record_ref = bucket.records[i].record_ref;
@@ -578,25 +579,12 @@ public:
                     record.removed = true;
                     SEEK_ALL(raw_file, record_ref)
                     raw_file.write((char *) &record, sizeof(record));
-                    // Found record. Remove by swapping it with the last element.
-                    if (i < bucket.size - 1) {
-                        bucket.records[i] = bucket.records[bucket.size - 1];
-                    }
-                    bucket.size--;
                     // If primary key, stop searching
                     if (primary_key) {
-                        // Write current bucket to memory
-                        SEEK_ALL(hash_file, current_bucket_ref)
-                        hash_file.write((char *) &bucket, sizeof(bucket));
-                        raw_file.close();
-                        hash_file.close();
                         return;
                     }
                 }
             }
-            // Write current bucket to memory
-            SEEK_ALL(hash_file, current_bucket_ref)
-            hash_file.write((char *) &bucket, sizeof(bucket));
             // If there is a next bucket, explore it
             if (bucket.next != -1) {
                 current_bucket_ref = bucket.next;
