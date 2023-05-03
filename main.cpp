@@ -36,8 +36,8 @@ void time_function(Function &fun, const std::string &function_name, const Params
     const auto start = std::chrono::steady_clock::now();
     fun(params...);
     const auto end = std::chrono::steady_clock::now();
-    const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-    std::cout << "Executed function " << function_name << " in " << duration << " microseconds." << std::endl;
+    const auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    std::cout << "Executed function " << function_name << " in " << duration << " ms." << std::endl;
 }
 
 int main() {
