@@ -442,7 +442,9 @@ public:
                     SEEK_ALL(raw_file, bucket.records[i].record_ref)
                     RecordType record{};
                     raw_file.read((char *) &record, sizeof(record));
-                    result.push_back(record);
+                    if (!record.removed) {
+                        result.push_back(record);
+                    }
                     // If primary key, stop searching
                     if (primary_key) {
                         stop = true;

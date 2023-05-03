@@ -41,18 +41,19 @@ void time_function(Function &fun, const std::string &function_name, const Params
 }
 
 int main() {
+    std::string path_to_file = "database/movies_and_series.dat";
     {
         std::function<int(MovieRecord &)> index = [=](MovieRecord &record) {
             return record.releaseYear;
         };
-        ExtendibleHashFile<int, MovieRecord> extendible_hash_release_year{"movies_and_series.dat", "release_year", false, index};
+        ExtendibleHashFile<int, MovieRecord> extendible_hash_release_year{path_to_file, "release_year", false, index};
         auto create_release_year = [&]() {
             if (!extendible_hash_release_year) {
                 extendible_hash_release_year.create_index();
             }
         };
         auto search_all_release_year = [&]() {
-            extendible_hash_release_year.remove(1874);
+//            extendible_hash_release_year.remove(1874);
             long total = 0;
             for (short i = 1874; i <= 2023; ++i) {
                 auto result = extendible_hash_release_year.search(i);
@@ -77,7 +78,7 @@ int main() {
         std::function<std::size_t(char[16])> hash = [&hasher](char key[16]) {
             return hasher(std::string(key));
         };
-        ExtendibleHashFile<char[16], MovieRecord, 16, std::function<char *(MovieRecord &)>, std::function<bool(char[16], char[16])>, std::function<std::size_t(char[16])>> extendible_hash_content_type{"movies_and_series.dat", "content_type", false, index, equal, hash};
+        ExtendibleHashFile<char[16], MovieRecord, 16, std::function<char *(MovieRecord &)>, std::function<bool(char[16], char[16])>, std::function<std::size_t(char[16])>> extendible_hash_content_type{path_to_file, "content_type", false, index, equal, hash};
         auto create_content_type = [&]() {
             if (!extendible_hash_content_type) {
                 extendible_hash_content_type.create_index();
@@ -95,13 +96,14 @@ int main() {
         std::function<int(MovieRecord &)> index = [=](MovieRecord &record) {
             return record.dataId;
         };
-        ExtendibleHashFile<int, MovieRecord> extendible_hash_data_id{"movies_and_series.dat", "data_id", true, index};
+        ExtendibleHashFile<int, MovieRecord> extendible_hash_data_id{path_to_file, "data_id", true, index};
         auto create_data_id = [&]() {
             if (!extendible_hash_data_id) {
                 extendible_hash_data_id.create_index();
             }
         };
         auto search_data_id = [&]() {
+            extendible_hash_data_id.remove(102795);
             auto res = extendible_hash_data_id.search(102795);
             for (auto &record: res) {
                 std::cout << record.to_string() << std::endl;
