@@ -23,11 +23,6 @@
         throw std::runtime_error("Could not open file."); \
     }                                                     \
     file.close();
-/*
- * Inspired by answer 2 on
- * https://stackoverflow.com/questions/3046889/optional-parameters-with-c-macros
- * Defines a macro with optional parameters for seeking both file pointers at once
- */
 
 #define SEEK_ALL(file, pos) \
     file.seekg(pos);        \
@@ -383,10 +378,7 @@ public:
     /*
      * Constructs the hash index file.
      * It creates 2 files: The directory file (.ehashdir) and the hash index (.ehash).
-     * Throws an exception if one of these files is empty.
-     * Accesses to disk:
-     * - If the index file hasn't yet been created: O(n) where n is the total number of records in the data file
-     * - If the index file has already been created: O(1)
+     * Accesses to disk: O(n) where n is the total number of records in the data file.
      */
     void create_index() {
         // Create needed files if they don't exist
