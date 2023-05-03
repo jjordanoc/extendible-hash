@@ -52,7 +52,7 @@ int main() {
             }
         };
         auto search_all_release_year = [&]() {
-            extendible_hash_release_year.remove(1874);
+//            extendible_hash_release_year.remove(1874);
             long total = 0;
             for (short i = 1874; i <= 2023; ++i) {
                 auto result = extendible_hash_release_year.search(i);

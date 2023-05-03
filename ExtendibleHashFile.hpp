@@ -349,7 +349,7 @@ class ExtendibleHashFile {
         std::size_t hash_sequence = get_hash_sequence(key);
         for (int i = 0; i < depth; ++i) {
             result <<= 1;
-            int lowbit = hash_sequence & 1;
+            std::size_t lowbit = hash_sequence & 1;
             result |= lowbit;
             hash_sequence >>= 1;
         }
